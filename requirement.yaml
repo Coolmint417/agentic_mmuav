@@ -1,0 +1,29 @@
+# Full Linux environment: simulation + desktop UI + DeepSeek + local Ministral.
+# Create from this repository: conda env create -f requirement.yaml
+# No machine-specific prefix; NVIDIA driver and model weights are installed separately.
+name: mm_planner
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.13
+  - pip
+  - numpy=2.4.3
+  - pillow=12.2.0
+  - casadi=3.7.2       # conda-forge supplies the IPOPT solver dependency
+  - pyside6=6.11.0
+  - libgl
+  - libegl
+  - libopengl
+  - cxx-compiler      # compilation support for native inference kernels
+  - ninja
+  - pip:
+      # Keep the CUDA build used by the tested local FP8 backend.
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==2.10.0+cu128
+      - mujoco==3.9.0
+      - PyOpenGL==3.1.10
+      - glfw==2.10.0
+      # Reuse the repository's pinned backend dependencies.
+      - -r requirements-ministral.txt
+      - -r requirements-deepseek.txt

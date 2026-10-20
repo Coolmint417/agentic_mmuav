@@ -1,0 +1,65 @@
+# Python bytecode, test/linter caches and build output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.ipynb_checkpoints/
+build/
+dist/
+*.egg-info/
+
+# Local environments (env/ is project source and MUST remain tracked)
+.venv/
+venv/
+/.conda/
+/conda-env/
+condaenv.*.requirements.txt
+
+# Experiment logs, rendered previews and smoke-test reports
+/logs/
+/artifacts/
+*.log
+
+# Downloaded model weights and inference caches
+/models/
+/weights/
+/checkpoints/
+/hf_cache/
+/model_cache/
+/.cache/
+/.huggingface/
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+
+# API keys and local credentials; keep distributable configuration examples
+.env
+.env.*
+!.env.example
+!.env.template
+openai_key
+deepseek_key
+api_key
+*_api_key
+*.pem
+*.key
+.aws/
+
+# Machine-specific editor/agent settings and temporary files
+.vscode/
+.idea/
+.codex
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+
+# Do not ignore *.obj, *.STL or images: env/assets/ contains required scene assets.

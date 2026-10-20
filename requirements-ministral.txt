@@ -1,0 +1,5 @@
+# Inference dependencies; existing mm_planner torch/CUDA and MuJoCo are retained.
+transformers==5.18.0
+accelerate==1.13.0
+kernels==0.17.2
+huggingface-hub==1.33.0

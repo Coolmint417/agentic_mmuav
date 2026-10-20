@@ -1,0 +1,2 @@
+# Optional HTTP backend; no Transformers/PyTorch dependency for API inference.
+httpx>=0.28,<0.29
