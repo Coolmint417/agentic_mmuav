@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from agent.runner import RunnerConfig
 from agent.backends import DeepSeekConfig
+from env.scenes import SCENES, get_scene
 from .preview import CameraPreview
 
 
@@ -53,6 +54,7 @@ class AgentWindow(QMainWindow):
         self._shutdown_error = None
         self._log_records = []
         self._authority_source = None
+        self._initial_scene_set = False
         self.setWindowTitle("MMUAV · 本地无人机 Agent")
         self.resize(1180, 780)
         self._bridge = EventBridge(self)
@@ -95,6 +97,23 @@ class AgentWindow(QMainWindow):
         ):
             model_bar.addWidget(widget)
         layout.addLayout(model_bar)
+        scene_bar = QHBoxLayout()
+        scene_bar.addWidget(QLabel("仿真地图"))
+        self.scene_selector = QComboBox()
+        for scene in SCENES:
+            self.scene_selector.addItem(scene.label, scene.id)
+        self.reload_scene_button = QPushButton("重载环境")
+        self.reload_scene_button.setToolTip(
+            "重置位置、仿真时间和状态机，清空模型对话历史；保留已加载模型。"
+            "任务运行中请先终止并等待退出。"
+        )
+        self.reload_scene_button.clicked.connect(self._reload_scene)
+        self.scene_status = QLabel("当前地图：初始化中")
+        scene_bar.addWidget(self.scene_selector)
+        scene_bar.addWidget(self.reload_scene_button)
+        scene_bar.addWidget(self.scene_status)
+        scene_bar.addStretch()
+        layout.addLayout(scene_bar)
         self.api_panel = QWidget()
         api_form = QFormLayout(self.api_panel)
         self.api_url = QLineEdit(
@@ -386,6 +405,11 @@ class AgentWindow(QMainWindow):
                 "已将本地默认 384 token 调整为 DeepSeek 建议的 4096；其他设置不变。"
             )
 
+    def _reload_scene(self):
+        if self.runner.reload_environment(self.scene_selector.currentData()):
+            self._append_chat("system", "正在重载环境，请稍候……")
+            self._refresh()
+
     def _load_model(self):
         try:
             spec = self.model_path.text().strip()
@@ -482,6 +506,10 @@ class AgentWindow(QMainWindow):
             return
         if event.kind == "chat":
             self._append_chat(event.data["role"], event.data["text"])
+        elif event.kind == "scene_changed":
+            self.scene_selector.setCurrentIndex(
+                self.scene_selector.findData(event.data["scene_id"])
+            )
         elif event.kind == "agent_log":
             self._log_records.append(event.data)
             self.model_output.appendPlainText(
@@ -513,6 +541,14 @@ class AgentWindow(QMainWindow):
             "模型：" + labels.get(model["model_state"], model["model_state"])
         )
         busy = model["busy"]
+        scene_id = state.get("scene_id")
+        if scene_id:
+            self.scene_status.setText("当前：" + get_scene(scene_id).label)
+            if not self._initial_scene_set:
+                self.scene_selector.setCurrentIndex(self.scene_selector.findData(scene_id))
+                self._initial_scene_set = True
+        self.scene_selector.setEnabled(not busy)
+        self.reload_scene_button.setEnabled(not busy and state.get("ready", False))
         editable = not busy and model["model_state"] != "ready"
         self.backend_selector.setEnabled(editable)
         self.model_path.setEnabled(editable)

@@ -1,0 +1,4 @@
+<mujoco model="MMUAV map2">
+  <include file="scene_common.xml"/>
+  <include file="assets/map2.xml"/>
+</mujoco>

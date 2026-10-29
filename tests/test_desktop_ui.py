@@ -45,6 +45,8 @@ class UIRuntime:
 
     def get_status(self):
         return {
+            "ready": True,
+            "scene_id": "map1",
             "camera": self.camera,
             "authorized": False,
             "agent_state": "end",
@@ -95,6 +97,10 @@ class UIRunner:
     def unload_model(self):
         pass
 
+    def reload_environment(self, scene_id):
+        self.reloaded_scene = scene_id
+        return True
+
     def cancel(self, reason):
         pass
 
@@ -112,6 +118,19 @@ class DesktopTests(unittest.TestCase):
         runtime, runner = UIRuntime(), UIRunner(events)
         window = AgentWindow(runtime, runner, events)
         window.show()
+        window._refresh()
+        self.assertEqual(window.scene_selector.count(), 5)
+        window.scene_selector.setCurrentIndex(3)
+        window.reload_scene_button.click()
+        self.assertEqual(runner.reloaded_scene, "map4")
+        self.assertIn("原地图", window.scene_status.text())
+        idle_status = runner.get_status
+        runner.get_status = lambda: {**idle_status(), "busy": True}
+        window._refresh()
+        self.assertFalse(window.reload_scene_button.isEnabled())
+        self.assertFalse(window.scene_selector.isEnabled())
+        runner.get_status = idle_status
+        window._refresh()
         self.assertEqual(window.tabs.count(), 3)
         self.assertEqual(
             window.system_prompt.toPlainText(), runner.config.system_prompt

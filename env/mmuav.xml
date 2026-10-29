@@ -45,7 +45,6 @@
         <!-- 灯光 -->
         <light directional="true" pos="-0.5 0.5 3" dir="0 0 -1" />
         
-        <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" friction="1 1 1"/>
         
         <!--geom name="Box" pos="3 0 1.5" type="mesh" mesh="wall_45deg" material="groundplane" friction="1 1 1"/-->
         <body name="Body" pos="-2 2 0.04">

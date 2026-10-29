@@ -1,0 +1,12 @@
+<mujoco model="map5">
+  <!--平台庭院：不同高度的平台、圆台和分隔墙，可测试平台降落。-->
+  <worldbody>
+    <geom name="floor" size="0 0 0.05" type="plane" material="map_floor_tiles_mat" friction="1 1 1"/>
+    <geom name="map5_platform1" type="box" pos="0 2 0.3" size="0.7 0.7 0.3" material="map_planks_mat" friction="1 1 1" />
+    <geom name="map5_platform2" type="box" pos="2 0 0.6" size="0.8 0.7 0.6" material="map_tiles_mat" friction="1 1 1" />
+    <geom name="map5_platform3" type="cylinder" pos="0 -1 0.45" size="0.7 0.45" material="map_marble_mat" friction="1 1 1" />
+    <geom name="map5_partition" type="box" pos="1 1 1.15" size="0.08 0.8 1.15" material="obstacle_wall_brick1" friction="1 1 1" />
+    <geom name="map5_pillar" type="cylinder" pos="2.6 2.4 1.15" size="0.3 1.15" material="map_wood_mat" friction="1 1 1" />
+    <geom name="map5_block" type="box" pos="-1.5 -0.8 0.45" size="0.45 0.45 0.45" material="obstacle_wall_marble1" friction="1 1 1" />
+  </worldbody>
+</mujoco>

@@ -1,6 +1,5 @@
 <mujoco model="CF2 scene">
   <include file="mmuav.xml"/>
-  <include file="assets/map1.xml"/>
 
   <statistic center="0 0 0.1" extent="0.2" meansize=".05"/>
 
@@ -34,6 +33,23 @@
     <material name="obstacle_wall_brick2" texture="cube_tex_brick2" texuniform="false" reflectance="0.08"/>
 
 
+    <!-- 障碍物使用 cube 映射，避免 2D XY 投影在竖直侧面拉成长条。 -->
+    <texture name="map_wood" type="cube" file="assets/textures/wood1.png"/>
+    <texture name="map_grey_marble" type="cube" file="assets/textures/grey_marble.png"/>
+    <texture name="map_tiles" type="cube" file="assets/textures/蓝色瓷砖纹理.png"/>
+    <texture name="map_planks" type="cube" file="assets/textures/木板纹理5.png"/>
+    <material name="map_wood_mat" texture="map_wood" texuniform="false"/>
+    <material name="map_marble_mat" texture="map_grey_marble" texuniform="false"/>
+    <material name="map_tiles_mat" texture="map_tiles" texuniform="false"/>
+    <material name="map_planks_mat" texture="map_planks" texuniform="false"/>
+
+    <!-- 地面保留 2D 贴图与原有重复比例，和障碍物独立配置。 -->
+    <texture name="map_floor_marble" type="2d" file="assets/textures/grey_marble.png"/>
+    <texture name="map_floor_tiles" type="2d" file="assets/textures/蓝色瓷砖纹理.png"/>
+    <texture name="map_floor_planks" type="2d" file="assets/textures/木板纹理5.png"/>
+    <material name="map_floor_marble_mat" texture="map_floor_marble" texuniform="true"/>
+    <material name="map_floor_tiles_mat" texture="map_floor_tiles" texuniform="true" texrepeat="2 2"/>
+    <material name="map_floor_planks_mat" texture="map_floor_planks" texuniform="true"/>
   </asset>
 
   <worldbody>

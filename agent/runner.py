@@ -131,6 +131,10 @@ class AgentRunner:
     def unload_model(self):
         return self._enqueue("unload")
 
+    def reload_environment(self, scene_id):
+        """Serialize map changes with generation; retain backend, discard old history."""
+        return self._enqueue("reload", scene_id)
+
     def submit(self, text):
         text = text.strip()
         if not text:
@@ -369,6 +373,14 @@ class AgentRunner:
                         self._model_state = "unloading"
                         self._unload()
                         self._chat("模型已卸载。")
+                    elif kind == "reload":
+                        self.runtime.reload_scene(value)
+                        self._conversation.clear()
+                        self._log("environment_reload", None, {"scene_id": value})
+                        self._chat(
+                            "环境已重载：" + value
+                            + "。无人机与仿真时间已重置，模型对话历史已清空。"
+                        )
                     elif kind == "turn":
                         self._run_turn(value)
                 except GenerationCancelled:

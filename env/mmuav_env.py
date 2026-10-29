@@ -15,6 +15,7 @@ if __package__:
     from .controller.se3_controller import SE3Controller, VehicleState
     from .controller.motor_mixer import Mixer
     from .flight_state_machine import FlightState, FlightStateMachine
+    from .scenes import load_scene_model
     from . import geometry
 else:
     from controller.rate_controller import RatePIDController
@@ -22,6 +23,7 @@ else:
     from controller.se3_controller import SE3Controller, VehicleState
     from controller.motor_mixer import Mixer
     from flight_state_machine import FlightState, FlightStateMachine
+    from scenes import load_scene_model
     import geometry
 
 MAX_YAW_RATE = math.radians(90.0)
@@ -180,13 +182,14 @@ def start_position_auto_land(d=None):
     _start_position_auto_land(d)
 
 
-def load_callback(m=None, d=None, *, flight_machine=None, agent_machine=None):
+def load_callback(m=None, d=None, *, flight_machine=None, agent_machine=None,
+                  scene_model=None):
     global last_time, yaw_command, position_target
     global takeoff_land_axis_last_sign
     global position_auto_mode, position_auto_target, land_still_time
     global planner_target_provider, flight_state_machine, agent_state_machine
     mujoco.set_mjcb_control(None)
-    m = mujoco.MjModel.from_xml_path(xml_path)
+    m = scene_model if scene_model is not None else mujoco.MjModel.from_xml_path(xml_path)
     d = mujoco.MjData(m)
     flight_state_machine = flight_machine if flight_machine is not None else FlightStateMachine()
     agent_state_machine = agent_machine
@@ -529,13 +532,14 @@ class MMUAVEnv:
 
     def __init__(self, flight_state_machine=None, *, agent_state_machine=None,
                  joystick_reader=None, position_gains=(12.0, 8.0, 8.0),
-                 auto_agent_without_joystick=False):
+                 auto_agent_without_joystick=False, scene_id="map1"):
         global joystick
         if MMUAVEnv._active is not None:
             raise RuntimeError("Only one active MMUAVEnv is supported")
         gains = np.asarray(position_gains, dtype=float)
         if gains.shape != (3,) or not np.all(np.isfinite(gains)) or np.any(gains <= 0):
             raise ValueError("position_gains must contain three positive finite gains")
+        scene_model = load_scene_model(scene_id)
         self.flight_state_machine = (
             flight_state_machine if flight_state_machine is not None else FlightStateMachine()
         )
@@ -556,12 +560,30 @@ class MMUAVEnv:
         self.control_authority_source = (
             "no_joystick" if isinstance(joystick, AgentOnlyInput) else "axis4"
         )
+        self.scene_id = scene_id
         self.model, self.data = load_callback(flight_machine=self.flight_state_machine,
-                                              agent_machine=self.agent_state_machine)
+                                              agent_machine=self.agent_state_machine,
+                                              scene_model=scene_model)
         position_controller.set_parameters(*gains)
         self._closed = False
         mujoco.mj_forward(self.model, self.data)
         MMUAVEnv._active = self
+
+    def reload_scene(self, scene_id, *, scene_model=None):
+        """Reset simulation in place on its owner thread, preserving turn identity."""
+        self._check_open()
+        model = scene_model if scene_model is not None else load_scene_model(scene_id)
+        gains = position_controller.kx, position_controller.kv, position_controller.kR
+        self.agent_state_machine.terminate("环境已重载")
+        self.flight_state_machine = FlightStateMachine()
+        self.model, self.data = load_callback(
+            flight_machine=self.flight_state_machine,
+            agent_machine=self.agent_state_machine,
+            scene_model=model,
+        )
+        position_controller.set_parameters(*gains)
+        self.scene_id = scene_id
+        mujoco.mj_forward(self.model, self.data)
 
     def _check_open(self):
         if self._closed:

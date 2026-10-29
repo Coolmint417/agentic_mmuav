@@ -10,7 +10,12 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 
 def main():
+    from env.scenes import SCENES
     parser = argparse.ArgumentParser(description="MMUAV PySide6 desktop")
+    parser.add_argument(
+        "--map", dest="scene_id", choices=[scene.id for scene in SCENES],
+        default="map1", help="初始地图",
+    )
     parser.add_argument("--model-path", help="本地模型路径/缓存 ID，或 DeepSeek 模型名")
     parser.add_argument(
         "--backend", choices=("ministral", "deepseek"), default="ministral"
@@ -85,7 +90,9 @@ def main():
             observation_height=args.observation_size,
         ),
         events=events,
-        environment_factory=lambda: MMUAVEnv(auto_agent_without_joystick=True),
+        environment_factory=lambda: MMUAVEnv(
+            auto_agent_without_joystick=True, scene_id=args.scene_id
+        ),
     )
     runner = AgentRunner(
         runtime,

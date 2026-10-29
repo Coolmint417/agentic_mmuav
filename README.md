@@ -8,6 +8,12 @@
 当前提供本地 Ministral 3B 和 DeepSeek API 推理、起降与航点工具、agent 与无人机状态机。
 已实现独立 Environment Runtime、模型 Agent Runner 和 PySide6 桌面界面。
 
+中文总体架构、两个状态机及模型通信格式见 [工程架构图](docs/architecture.md)。
+
+现有 **5 张地图**，可在前端顶部的“仿真地图”下拉框选择并点击“重载环境”，
+或使用 `python app.py --map map3` 指定初始地图。重载保留模型，重置无人机与仿真时间并清空模型对话历史；
+任务运行中需先终止并等待退出。布局、材质及扩展方法见 [地图说明](docs/maps.md)。
+
 ## 启动桌面界面
 
 首次安装完整环境（Linux，包含 CUDA 12.8 的本地模型后端）：

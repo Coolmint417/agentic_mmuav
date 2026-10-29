@@ -55,13 +55,14 @@ class OwnedEnvironment(MMUAVEnv):
 
 @contextmanager
 def running_system(
-    model, *, authorized=True, realtime=False, preview=False, config=None
+    model, *, authorized=True, realtime=False, preview=False, config=None,
+    runtime_config=None,
 ):
     events, received = EventBus(), []
     events.subscribe(received.append)
     remote = FakeJoystick(authorized)
     runtime = EnvironmentRuntime(
-        RuntimeConfig(realtime=realtime, preview_enabled=preview),
+        runtime_config or RuntimeConfig(realtime=realtime, preview_enabled=preview),
         events=events,
         environment_factory=lambda: OwnedEnvironment(joystick_reader=remote),
     )

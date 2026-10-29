@@ -1,0 +1,13 @@
+<mujoco model="map4">
+  <!--双门洞：门框由三个有碰撞的 box 组成；开口宽 1.6 米，高 2 米。-->
+  <worldbody>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" friction="1 1 1"/>
+    <geom name="map4_gate1_left" type="box" pos="0 0.7 1" size="0.16 0.5 1" material="obstacle_wall_brick2" friction="1 1 1" />
+    <geom name="map4_gate1_right" type="box" pos="0 3.3 1" size="0.16 0.5 1" material="obstacle_wall_brick2" friction="1 1 1" />
+    <geom name="map4_gate1_top" type="box" pos="0 2 2.15" size="0.16 1.8 0.15" material="map_wood_mat" friction="1 1 1" />
+    <geom name="map4_gate2_left" type="box" pos="2.5 -0.3 1" size="0.16 0.5 1" material="map_marble_mat" friction="1 1 1" />
+    <geom name="map4_gate2_right" type="box" pos="2.5 2.3 1" size="0.16 0.5 1" material="map_marble_mat" friction="1 1 1" />
+    <geom name="map4_gate2_top" type="box" pos="2.5 1 2.15" size="0.16 1.8 0.15" material="map_tiles_mat" friction="1 1 1" />
+    <geom name="map4_marker" type="cylinder" pos="1.1 -0.8 0.4" size="0.3 0.4" material="map_planks_mat" friction="1 1 1" />
+  </worldbody>
+</mujoco>

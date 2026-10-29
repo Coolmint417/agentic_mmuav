@@ -7,6 +7,7 @@ import time
 
 from agent.state_machine import AgentState, ThinkOutcome
 from env.flight_state_machine import FlightState
+from env.scenes import get_scene, load_scene_model
 from env.mmuav_env import MMUAVEnv, POSITION_AUTO_NONE
 from observations import MuJoCoObservationProvider, ObservationConfig, collect_for_agent
 from tools import FlyWaypointTool, LandTool, TakeoffTool
@@ -178,6 +179,33 @@ class EnvironmentRuntime:
             raise ValueError("Unsupported preview camera")
         return self._post(lambda: self._change_camera(camera))
 
+    def reload_scene(self, scene_id):
+        """Reload between turns, on the same GL/physics owner thread."""
+        get_scene(scene_id)
+
+        def reload():
+            if (
+                self._active is not None
+                or self._env.agent_state_machine.state is not AgentState.END
+            ):
+                raise RuntimeError("请先终止当前任务，等待模型退出后再重载环境。")
+            # A malformed map leaves the current environment and renderers usable.
+            model = load_scene_model(scene_id)
+            observer_config = self._observer.config
+            if self._preview is not None:
+                self._preview.close()
+                self._preview = None
+            self._observer.close()
+            self._env.reload_scene(scene_id, scene_model=model)
+            self._world_camera = WorldCamera(self._env.model, self._env.data)
+            self._observer = MuJoCoObservationProvider(self._env, observer_config)
+            with self._lock:
+                self._frame = None
+            self._publish_snapshot()
+            self.events.publish("scene_changed", {"scene_id": scene_id})
+
+        return self._invoke(reload, timeout=60)
+
     def _change_camera(self, camera):
         self._camera = camera
         with self._lock:
@@ -279,6 +307,7 @@ class EnvironmentRuntime:
         agent = self._env.agent_state_machine
         status = {
             "ready": True,
+            "scene_id": self._env.scene_id,
             "error": None,
             "authorized": self._env.agent_control_enabled,
             "authority_source": self._env.control_authority_source,

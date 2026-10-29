@@ -1,0 +1,11 @@
+<mujoco model="map3">
+  <!--错位走廊：交替短墙形成需要绕行的路径，北向 x 增大。-->
+  <worldbody>
+    <geom name="floor" size="0 0 0.05" type="plane" material="map_floor_planks_mat" friction="1 1 1"/>
+    <geom name="map3_left" type="box" pos="0.4 3.2 1.25" size="3.4 0.08 1.25" material="map_planks_mat" friction="1 1 1" />
+    <geom name="map3_right" type="box" pos="0.4 -1.2 1.25" size="3.4 0.08 1.25" material="obstacle_wall_marble1" friction="1 1 1" />
+    <geom name="map3_baffle1" type="box" pos="-0.4 2.35 1.1" size="0.09 0.85 1.1" material="obstacle_wall_brick1" friction="1 1 1" />
+    <geom name="map3_baffle2" type="box" pos="1.2 -0.2 1.1" size="0.09 1.0 1.1" material="map_tiles_mat" friction="1 1 1" />
+    <geom name="map3_baffle3" type="box" pos="2.8 2.35 1.1" size="0.09 0.85 1.1" material="map_marble_mat" friction="1 1 1" />
+  </worldbody>
+</mujoco>
