@@ -38,6 +38,7 @@ AXIS_PITCH = 1
 AXIS_THROTTLE = 2
 AXIS_YAW = 3
 AXIS_AGENT_ENABLE = 4
+AXIS_CRAWL = 6
 AXIS_TAKEOFF_LAND = 7
 
 CTRL_MODE_POSITION = 2      # Always position control
@@ -53,6 +54,12 @@ TAKEOFF_KV = 2.0
 LAND_DESCENT_SPEED = 0.25
 LAND_STILL_SPEED = 0.08
 LAND_STILL_TIME = 1.0
+CRAWL_STAGE_DURATION = 0.8
+CRAWL_SERVO_AMPLITUDE = 0.3
+CRAWL_ATTACHED_FRICTION = 3.0
+CRAWL_RELEASE_FRICTION = 0.05
+SUCKER_GEOMS = ("sucker_upleft", "sucker_bottomleft",
+                "sucker_bottomright", "sucker_upright")  # actuator order 1:5
 
 
 class JoystickReader:
@@ -188,9 +195,17 @@ def load_callback(m=None, d=None, *, flight_machine=None, agent_machine=None,
     global takeoff_land_axis_last_sign
     global position_auto_mode, position_auto_target, land_still_time
     global planner_target_provider, flight_state_machine, agent_state_machine
+    global last_time_crawl, crawl_stage, crawl_axis_positive
+    global crawl_stop_requested, crawl_finishing, crawl_neutral_start
+    global crawl_step_limit, crawl_steps_completed, crawl_end_attached
+    global sucker_contact_defaults
     mujoco.set_mjcb_control(None)
     m = scene_model if scene_model is not None else mujoco.MjModel.from_xml_path(xml_path)
     d = mujoco.MjData(m)
+    sucker_contact_defaults = {
+        name: (int(m.geom(name).priority.item()), m.geom(name).friction.copy())
+        for name in SUCKER_GEOMS
+    }
     flight_state_machine = flight_machine if flight_machine is not None else FlightStateMachine()
     agent_state_machine = agent_machine
     if agent_state_machine is not None:
@@ -202,6 +217,15 @@ def load_callback(m=None, d=None, *, flight_machine=None, agent_machine=None,
     position_auto_mode = POSITION_AUTO_NONE
     position_auto_target = d.qpos[:3].copy()
     land_still_time = 0.0
+    last_time_crawl = 0.0
+    crawl_stage = 0
+    crawl_axis_positive = False
+    crawl_stop_requested = False
+    crawl_finishing = False
+    crawl_neutral_start = 0.0
+    crawl_step_limit = None
+    crawl_steps_completed = 0
+    crawl_end_attached = True
     position_target = d.qpos[:3].copy()
     rate_controller.reset()
     gyro_filter.reset()
@@ -252,6 +276,8 @@ def _start_position_auto_takeoff(d):
     global position_auto_mode, position_auto_target, position_target, land_still_time
     if flight_state_machine.state is not FlightState.ON_GROUND:
         raise ValueError("takeoff requires ON_GROUND")
+    # A completed crawl leaves all cups attached; release before lifting off.
+    _set_sucker_attachment(d.model, d, (False,) * 4)
     position_auto_mode = POSITION_AUTO_TAKEOFF
     position_auto_target = d.qpos[:3].copy()
     position_auto_target[2] = np.clip(
@@ -317,110 +343,126 @@ def _update_position_auto_control(d, dt):
     return None
 
 
-global last_time_crawl, crawl_stage
-global original_upleft_sucker_geom_contype, original_upleft_sucker_geom_conaffinity
-global original_upright_sucker_geom_contype, original_upright_sucker_geom_conaffinity
-global original_bottomleft_sucker_geom_contype, original_bottomleft_sucker_geom_conaffinity
-global original_bottomright_sucker_geom_contype, original_bottomright_sucker_geom_conaffinity
-last_time_crawl = 0
+last_time_crawl = 0.0
 crawl_stage = 0
-def control_callback_crawl(m, d):
-    global last_time_crawl, crawl_stage
-
-    geom_sucker_upleft_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "sucker_upleft")
-    geom_sucker_upright_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "sucker_upright")
-    geom_sucker_bottomleft_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "sucker_bottomleft")
-    geom_sucker_bottomright_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "sucker_bottomright")
-    
-    stage_duration = 1.0
-    ctrl_val_max = 0.3
-    dt_crawl = (d.time - last_time_crawl) / stage_duration
-    if dt_crawl > 1.0:
-        crawl_stage = crawl_stage + 1
-        last_time_crawl = d.time
-    
-    if crawl_stage % 4 == 0:
-        
-        m.geom_contype[geom_sucker_upleft_id] = 1
-        m.geom_contype[geom_sucker_bottomright_id] = 1
-        m.geom_conaffinity[geom_sucker_upleft_id] = 1
-        m.geom_conaffinity[geom_sucker_bottomright_id] = 1
-
-        m.geom_contype[geom_sucker_upright_id] = 0
-        m.geom_contype[geom_sucker_bottomleft_id] = 0
-        m.geom_conaffinity[geom_sucker_upright_id] = 0
-        m.geom_conaffinity[geom_sucker_bottomleft_id] = 0
-        d.ctrl[1] = 1.0
-        d.ctrl[2] = 0.0
-        d.ctrl[3] = 1.0
-        d.ctrl[4] = 0.0
-
-        '''
-        d.ctrl[9] = 1.0
-        d.ctrl[10] = 0.0
-        d.ctrl[11] = 1.0
-        d.ctrl[12] = 0.0
-
-        m.geom_friction[sucker_upleft_id][0] = 2.0
-        m.geom_friction[sucker_bottomleft_id][0] = 0.0
-        m.geom_friction[sucker_bottomright_id][0] = 2.0
-        m.geom_friction[sucker_upright_id][0] = 0.0'''
-
-        '''m.site_pos[site_sucker_upleft_id] = d.xpos[body_sucker_upleft_id]
-        m.site_pos[site_sucker_bottomright_id] = d.xpos[body_sucker_bottomright_id]
-        d.eq_active[0] = 1
-        d.eq_active[1] = 0
-        d.eq_active[2] = 1
-        d.eq_active[3] = 0'''
-       
-    elif crawl_stage % 4 == 1:
-        ctrl_val = dt_crawl * 0.5 - ctrl_val_max
-        d.ctrl[0] = ctrl_val
-
-        d.ctrl[1] = 1 - dt_crawl
-        d.ctrl[2] = dt_crawl
-        d.ctrl[3] = 1 - dt_crawl
-        d.ctrl[4] = dt_crawl
-    elif crawl_stage % 4 == 2:
+crawl_axis_positive = False
+crawl_stop_requested = False
+crawl_finishing = False
+crawl_neutral_start = 0.0
+crawl_step_limit = None
+crawl_steps_completed = 0
+crawl_end_attached = True
+sucker_contact_defaults = {}
 
 
-        m.geom_contype[geom_sucker_upright_id] = 1
-        m.geom_contype[geom_sucker_bottomleft_id] = 1
-        m.geom_conaffinity[geom_sucker_upright_id] = 1
-        m.geom_conaffinity[geom_sucker_bottomleft_id] = 1
+def _set_sucker_attachment(m, d, attached):
+    """Switch adhesion and sliding friction together, retaining normal support."""
+    for index, (name, enabled) in enumerate(zip(SUCKER_GEOMS, attached), start=1):
+        geom = m.geom(name)
+        geom.contype = 1
+        geom.conaffinity = 1
+        priority, friction = sucker_contact_defaults[name]
+        # Both attached and released cups override the surface's defaults.
+        geom.priority = max(1, priority + 1)
+        geom.friction = friction
+        geom.friction[0] = (CRAWL_ATTACHED_FRICTION if enabled
+                            else CRAWL_RELEASE_FRICTION)
+        d.ctrl[index] = float(enabled)
 
-        m.geom_contype[geom_sucker_upleft_id] = 0
-        m.geom_contype[geom_sucker_bottomright_id] = 0
-        m.geom_conaffinity[geom_sucker_upleft_id] = 0
-        m.geom_conaffinity[geom_sucker_bottomright_id] = 0
+
+def _start_crawl(d, *, steps=None, attached=True):
+    global last_time_crawl, crawl_stage, crawl_stop_requested, crawl_finishing
+    global crawl_step_limit, crawl_steps_completed, crawl_end_attached
+    if flight_state_machine.state not in {FlightState.ON_GROUND, FlightState.ADHERED}:
+        raise ValueError("crawl requires UAV ON_GROUND or ADHERED state")
+    if position_auto_mode != POSITION_AUTO_NONE:
+        raise ValueError("crawl cannot start during automatic takeoff/landing")
+    if flight_state_machine.state is FlightState.ADHERED:
+        flight_state_machine.transition_to(FlightState.ON_GROUND)
+    last_time_crawl = float(d.time)
+    crawl_stage = 0
+    crawl_stop_requested = False
+    crawl_finishing = False
+    crawl_step_limit = steps
+    crawl_steps_completed = 0
+    crawl_end_attached = attached
+    flight_state_machine.transition_to(FlightState.CRAWLING)
+    rate_controller.reset()
 
 
+def _update_manual_crawl_trigger(d):
+    global crawl_axis_positive, crawl_stop_requested
+    positive = joystick.axis(AXIS_CRAWL) > 0.0
+    rising = positive and not crawl_axis_positive
+    falling = not positive and crawl_axis_positive
+    crawl_axis_positive = positive
+    if (rising and flight_state_machine.state is FlightState.ON_GROUND
+            and position_auto_mode == POSITION_AUTO_NONE):
+        _start_crawl(d)
+    elif falling and flight_state_machine.state is FlightState.CRAWLING:
+        # Latch the request: toggling the switch again cannot interrupt cleanup.
+        crawl_stop_requested = True
 
-        '''
-        d.ctrl[9] = 0.0
-        d.ctrl[10] = 1.0
-        d.ctrl[11] = 0.0
-        d.ctrl[12] = 1.0
 
-        m.geom_friction[sucker_upleft_id][0] = 0.0
-        m.geom_friction[sucker_bottomleft_id][0] = 2.0
-        m.geom_friction[sucker_bottomright_id][0] = 0.0
-        m.geom_friction[sucker_upright_id][0] = 2.0
-        m.site_pos[site_sucker_bottomleft_id] = d.xpos[body_sucker_bottomleft_id]
-        m.site_pos[site_sucker_upright_id] = d.xpos[body_sucker_upright_id]
-        d.eq_active[0] = 0
-        d.eq_active[1] = 1
-        d.eq_active[2] = 0
-        d.eq_active[3] = 1'''
+def control_crawl(m, d):
+    """Four-stage tested gait, followed by a neutral/attachment stopping cycle.
 
-    elif crawl_stage % 4 == 3:
-        ctrl_val = -dt_crawl * 0.5 + 0.25
-        d.ctrl[0] = ctrl_val
-        
-        d.ctrl[1] = dt_crawl
-        d.ctrl[2] = 1 - dt_crawl
-        d.ctrl[3] = dt_crawl
-        d.ctrl[4] = 1 - dt_crawl
+    A stop waits for stage 0, holds one diagonal pair, returns the servo to
+    neutral over one stage, then attaches all cups for one settling stage.
+    Motors stay off throughout. Called only by the simulation owner thread.
+    """
+    global last_time_crawl, crawl_stage, crawl_finishing, crawl_neutral_start
+    global crawl_stop_requested, position_target, yaw_command, crawl_steps_completed
+    d.ctrl[5:9] = 0.0
+    elapsed = max(0.0, float(d.time) - last_time_crawl)
+    if elapsed >= CRAWL_STAGE_DURATION:
+        # Apply the outgoing ramp endpoint before changing stage. This avoids
+        # missing +/-amplitude (or neutral) at discrete simulation timesteps.
+        if crawl_stage % 4 == 1:
+            d.ctrl[0] = 0.0 if crawl_finishing else CRAWL_SERVO_AMPLITUDE
+        elif crawl_stage % 4 == 3:
+            d.ctrl[0] = -CRAWL_SERVO_AMPLITUDE
+        crawl_stage = (crawl_stage + 1) % 4
+        last_time_crawl = float(d.time)
+        elapsed = 0.0
+        if not crawl_finishing and crawl_stage == 0:
+            crawl_steps_completed += 1
+            if crawl_step_limit is not None and crawl_steps_completed >= crawl_step_limit:
+                crawl_stop_requested = True
+        if crawl_finishing and crawl_stage == 1:
+            crawl_neutral_start = float(d.ctrl[0])
+        elif crawl_finishing and crawl_stage == 3:
+            d.ctrl[0] = 0.0
+            _set_sucker_attachment(m, d, (True, True, True, True))
+            flight_state_machine.transition_to(FlightState.ON_GROUND)
+            if crawl_step_limit is not None:
+                _set_sucker_attachment(m, d, (crawl_end_attached,) * 4)
+                if crawl_end_attached:
+                    flight_state_machine.transition_to(FlightState.ADHERED)
+            position_target = d.qpos[:3].copy()
+            yaw_command = _current_yaw(d)
+            crawl_stage = 0
+            crawl_stop_requested = False
+            crawl_finishing = False
+            return
+
+    if crawl_stop_requested and crawl_stage == 0:
+        crawl_finishing = True
+    fraction = min(1.0, elapsed / CRAWL_STAGE_DURATION)
+    if crawl_stage == 0:
+        _set_sucker_attachment(m, d, (True, False, True, False))
+    elif crawl_stage == 1:
+        if crawl_finishing:
+            d.ctrl[0] = (1.0 - fraction) * crawl_neutral_start
+        else:
+            d.ctrl[0] = (2.0 * fraction - 1.0) * CRAWL_SERVO_AMPLITUDE
+    elif crawl_stage == 2:
+        _set_sucker_attachment(
+            m, d, (True, True, True, True) if crawl_finishing
+            else (False, True, False, True))
+    elif crawl_stage == 3:
+        d.ctrl[0] = (1.0 - 2.0 * fraction) * CRAWL_SERVO_AMPLITUDE
+
 
 def _current_yaw(d):
     w, x, y, z = d.qpos[3:7]
@@ -430,10 +472,15 @@ def _current_yaw(d):
 def poll_control_authority(d):
     """Axis4 is the sole authorization source; never read other axes in agent mode."""
     global position_auto_mode, position_target, yaw_command, land_still_time
-    global planner_target_provider
+    global planner_target_provider, crawl_stop_requested, crawl_axis_positive, crawl_end_attached
     joystick.update()
     value = joystick.axis(AXIS_AGENT_ENABLE)
     enabled = value > 0.5
+    if (enabled and flight_state_machine.state is FlightState.CRAWLING
+            and not flight_state_machine.agent_authorized):
+        # Do not expose agent tools until the physical stopping cycle ends.
+        crawl_stop_requested = True
+        enabled = False
     was_auto = position_auto_mode != POSITION_AUTO_NONE
     changed = flight_state_machine.set_agent_authorized(enabled)
     if agent_state_machine is not None:
@@ -448,7 +495,12 @@ def poll_control_authority(d):
         if enabled and was_auto:
             flight_state_machine.transition_to(FlightState.HOVERING)
         if not enabled:
+            if flight_state_machine.state is FlightState.CRAWLING:
+                crawl_stop_requested = True
+                crawl_end_attached = True
             _sync_takeoff_land_axis_state()
+            # Discard switch changes made while manual input was masked.
+            crawl_axis_positive = joystick.axis(AXIS_CRAWL) > 0.0
             if model_stop_callback is not None:
                 try:
                     model_stop_callback()
@@ -470,8 +522,23 @@ def control_callback(m, d):
     qw, qx, qy, qz = d.sensordata[6:10]
     rotation = geometry.GeoQuaternion(qx, qy, qz, qw).getRotationMatrix()
 
-    if not agent_control and not authority_changed and position_auto_mode == POSITION_AUTO_NONE:
-        _update_position_mode_takeoff_land_trigger(d)
+    if not agent_control and not authority_changed:
+        # Consume Axis6 edges even during auto takeoff/landing so a switch held
+        # high in flight cannot start crawling later when landing completes.
+        _update_manual_crawl_trigger(d)
+        if position_auto_mode == POSITION_AUTO_NONE:
+            _update_position_mode_takeoff_land_trigger(d)
+    if flight_state_machine.state is FlightState.CRAWLING:
+        control_crawl(m, d)
+        last_time = d.time
+        return
+    if (flight_state_machine.state in {FlightState.ON_GROUND, FlightState.ADHERED}
+            and position_auto_mode == POSITION_AUTO_NONE):
+        # Ground locomotion must not fight a stale airborne position target.
+        d.ctrl[5:9] = 0.0
+        rate_controller.reset()
+        last_time = d.time
+        return
     auto_velocity = _update_position_auto_control(d, dt)
     velocity = np.zeros(3)
     acceleration = np.zeros(3)
@@ -670,6 +737,25 @@ class MMUAVEnv:
         position_target = position.copy()
         yaw_command = yaw
         self._install_provider(provider if self.agent_control_enabled else None)
+
+    def start_crawl(self, steps, attached):
+        self.require_agent_control()
+        if type(steps) is not int or steps <= 0:
+            raise ValueError("steps must be a positive integer")
+        if type(attached) is not bool:
+            raise ValueError("attached must be a JSON boolean")
+        _start_crawl(self.data, steps=steps, attached=attached)
+
+    def request_crawl_stop(self):
+        """Schedule physical cleanup even after a task generator was closed."""
+        global crawl_stop_requested, crawl_end_attached
+        if self.flight_state_machine.state is FlightState.CRAWLING:
+            crawl_stop_requested = True
+            crawl_end_attached = True
+
+    def get_crawl_progress(self):
+        return {"steps_completed": crawl_steps_completed,
+                "running": self.flight_state_machine.state is FlightState.CRAWLING}
 
     def start_auto_takeoff(self):
         self.require_agent_control()

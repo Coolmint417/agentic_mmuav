@@ -102,6 +102,23 @@ class ProtocolTests(unittest.TestCase):
 
 
 class RunnerIntegrationTests(unittest.TestCase):
+    def test_crawl_runs_through_registry_and_returns_observation(self):
+        model = ScriptedModel([
+            '{"tool":"crawl","steps":1,"attached":true}',
+            '{"tool":"crawl","steps":2,"attached":false}',
+            '{"final":"爬行完成，已脱附"}',
+        ])
+        with running_system(model) as (runtime, runner, remote, events):
+            self.assertTrue(runner.submit("向前爬行，最后脱附"))
+            wait_until(lambda: not runner.get_status()["busy"])
+            self.assertEqual(len(model.calls), 3)
+            for index, state, steps in ((1, "adhered", 1), (2, "on_ground", 2)):
+                feedback = json.loads(model.calls[index]["messages"][-1]["content"])
+                self.assertEqual(feedback["tool_result"]["status"], "success")
+                self.assertEqual(feedback["tool_result"]["steps_completed"], steps)
+                self.assertEqual(feedback["observation"]["flight_state"], state)
+            self.assertEqual(runtime.get_status()["agent_state"], "end")
+
     def test_json_repairs_preserve_task_observation_and_image_binding(self):
         from agent.messages import attach_image
 

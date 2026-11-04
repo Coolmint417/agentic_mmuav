@@ -6,6 +6,8 @@ class FlightState(str, Enum):
     ON_GROUND = "on_ground"  # 在地面
     HOVERING = "hovering"  # 悬停
     FLY_AGENT = "fly_agent"  # agent 轨迹飞行
+    CRAWLING = "crawling"  # 爬行（包括停止收尾）
+    ADHERED = "adhered"  # 吸附
 
 
 class ControlMode(str, Enum):
@@ -18,7 +20,9 @@ class InvalidFlightTransition(ValueError):
 
 
 class FlightStateMachine:
-    """Manage ON_GROUND <-> HOVERING <-> FLY_AGENT transitions.
+    """Manage flight and ground locomotion transitions.
+
+    CRAWLING and ADHERED each connect only to ON_GROUND.
 
     Defaults to ON_GROUND under MANUAL control. Repeating a state is a no-op.
     Manual stick motion stays HOVERING; FLY_AGENT is reserved for agent
@@ -27,9 +31,12 @@ class FlightStateMachine:
     """
 
     _TRANSITIONS = {
-        FlightState.ON_GROUND: frozenset({FlightState.HOVERING}),
+        FlightState.ON_GROUND: frozenset({FlightState.HOVERING, FlightState.CRAWLING,
+                                        FlightState.ADHERED}),
         FlightState.HOVERING: frozenset({FlightState.ON_GROUND, FlightState.FLY_AGENT}),
         FlightState.FLY_AGENT: frozenset({FlightState.HOVERING}),
+        FlightState.CRAWLING: frozenset({FlightState.ON_GROUND}),
+        FlightState.ADHERED: frozenset({FlightState.ON_GROUND}),
     }
 
     def __init__(self, initial_state: FlightState = FlightState.ON_GROUND,
@@ -51,14 +58,14 @@ class FlightStateMachine:
         return self._control_mode is ControlMode.AGENT
 
     def set_agent_authorized(self, enabled: bool) -> bool:
-        """Return whether authority changed; revocation always enters HOVERING."""
+        """Return whether authority changed; preserve ground locomotion on revocation."""
         if not isinstance(enabled, bool):
             raise TypeError("enabled must be a bool")
         mode = ControlMode.AGENT if enabled else ControlMode.MANUAL
         if mode is self._control_mode:
             return False
         self._control_mode = mode
-        if not enabled:
+        if not enabled and self._state not in {FlightState.CRAWLING, FlightState.ADHERED}:
             self.transition_to(FlightState.HOVERING)
         return True
 
@@ -87,6 +94,7 @@ class FlightStateMachine:
         if not self.can_transition_to(target):
             raise InvalidFlightTransition(
                 f"Cannot transition from {self._state.value} to {target.value}; "
+                "ground locomotion must transition through on_ground; "
                 "FLY_AGENT requires agent authority and transitions through hovering"
             )
         self._state = target

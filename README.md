@@ -59,7 +59,17 @@ python app.py --backend deepseek
 
 无人机始终使用位置控制。Axis4=1 授权 agent，屏蔽其他遥控器输入；
 Axis4 从1切到0时终止 agent（END），取消轨迹/自动起降并进入 HOVERING，恢复手动控制。
-手动模式仅有 ON_GROUND / HOVERING，HOVERING 允许摇杆控制运动；Axis7 负责手动起降并同步飞行状态。
+HOVERING 允许摇杆控制运动；Axis7 负责手动起降并同步飞行状态。
+手动模式下，ON_GROUND 且未执行起飞时，Axis6 从 <=0 切为 >0 启动 CRAWLING；
+从 >0 切为 <=0 请求停止。停止时等步态进入第一阶段，保持一组对角吸盘吸附，
+将腿平滑回到中立位，再恢复四个吸盘吸附并等待一个阶段，最后返回 ON_GROUND。
+爬行及收尾期间关闭旋翼、禁止起飞；Axis4 请求接管时先完成收尾，再授权 Agent。
+步态阶段时长为 `CRAWL_STAGE_DURATION=0.8` 秒，摆角为 `CRAWL_SERVO_AMPLITUDE=0.3` 弧度。
+CRAWLING 和预留的 ADHERED 状态分别只允许与 ON_GROUND 互相切换；ADHERED 未绑定遥控器通道，可由 `crawl` 工具的最终吸附参数进入。
+手动爬行停止后保持吸附；下次起飞前自动释放吸盘。Agent 接管后不读取 Axis6。
+Agent 可调用 `{"tool":"crawl","steps":2,"attached":true}`：一个四阶段周期算一步，
+仅允许 ON_GROUND / ADHERED；完成后按布尔值进入 ADHERED 或脱附后的 ON_GROUND。
+详见 [爬行工具](tools/README.md#爬行工具-crawl)。
 原 FLYING 状态已改名为 FLY_AGENT，专用于授权后的 agent 轨迹执行；Axis5 不再使用。
 `MMUAVEnv.set_model_stop_callback()` 已接入 runner 的生成取消事件。
 完整状态规则和入口见 [env/README.md](env/README.md)。

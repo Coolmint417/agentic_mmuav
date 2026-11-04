@@ -22,10 +22,14 @@ class FlightMachineTests(unittest.TestCase):
                     continue
                 for target in FlightState:
                     machine = FlightStateMachine(source, control_mode=mode)
-                    allowed = not (
-                        {source, target} == {FlightState.ON_GROUND, FlightState.FLY_AGENT}
-                        or (mode is ControlMode.MANUAL and target is FlightState.FLY_AGENT)
-                    )
+                    links = {
+                        frozenset({FlightState.ON_GROUND, FlightState.HOVERING}),
+                        frozenset({FlightState.HOVERING, FlightState.FLY_AGENT}),
+                        frozenset({FlightState.ON_GROUND, FlightState.CRAWLING}),
+                        frozenset({FlightState.ON_GROUND, FlightState.ADHERED}),
+                    }
+                    allowed = (source is target or frozenset({source, target}) in links)
+                    allowed &= not (mode is ControlMode.MANUAL and target is FlightState.FLY_AGENT)
                     self.assertEqual(machine.can_transition_to(target), allowed)
                     if allowed:
                         self.assertEqual(machine.transition_to(target), target)

@@ -79,3 +79,32 @@ MUJOCO_GL=egl OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m unittest discov
 测试覆盖地面起飞→降落→再次起飞、平台降落后再次起飞、状态切换、非法调用、
 超时、异常和终止，并同时运行航点工具与控制权切换测试。
 第一版pyside界面左侧的第一视角和世界视角可以不同时出现，用户可以用一个类似左右箭头的控件切换是哪个视角。同时runner也应该读取一下axis4的值，如果不授权的话直接在对话框中返回相应提示，直接不给模型发promp
+
+
+## 爬行工具 crawl
+
+```json
+{"tool":"crawl","steps":2,"attached":true}
+```
+
+- `steps`：模型决定的正整数，一个完整四阶段步态周期算一步，约 3.2 仿真秒。
+- `attached`：必须为 JSON 布尔值。`true` 表示结束后吸附并进入 `ADHERED`；
+  `false` 表示释放四个吸盘并进入 `ON_GROUND`，碰撞支撑始终保留。
+- 仅允许 `ON_GROUND` 或 `ADHERED` 调用，并要求 Axis4 授权和 agent `EXECUTE`。
+  `ADHERED` 启动时先经过 `ON_GROUND`，再进入 `CRAWLING`；完成时也经过
+  `ON_GROUND`，按参数决定是否进入 `ADHERED`。其他状态返回 `error`，不执行动作。
+- 沿机体前方爬行，不提供转向和后退。步数不是距离；收腿收尾期间仍可能发生位移。
+  模型需要结合执行后的观测判断实际位置。
+- 复用环境步态，由环境在阶段边界计步。计满后先收腿至中立位、恢复全部吸盘并等待，
+  再应用最终吸附参数。成功后 agent 从 `EXECUTE` 进入 `OBSERVATION`。
+- `CrawlTool.iter_execute()` 交给 Runtime 驱动，不直接调用 `env.step()`；
+  同步 `execute()` 仅供独立脚本或测试使用。工具已经注册到 Runtime 和模型 JSON 协议、默认提示词。
+- Axis4 撤销、用户终止、生成器关闭或异常时，请求环境完成收尾并保持吸附，
+  不安装空中悬停指令。撤销授权后 agent 保持 `END`，环境继续独立执行物理收尾。
+- 为防止释放吸盘时穿入表面，碰撞始终开启。吸附的一组吸盘使用
+  `CRAWL_ATTACHED_FRICTION=3.0`，释放的一组使用 `CRAWL_RELEASE_FRICTION=0.05`，
+  状态切换时同步更新滑动摩擦和吸附力；收尾后也按最终吸附状态保持对应摩擦。
+  两种状态均提高接触优先级，使吸盘摩擦设置覆盖平台默认值。扭转、滚动摩擦沿用 XML。
+
+无参数、缺失参数、额外字段、非正整数步数及 `attached: 0/1` 都会被拒绝。
+模型必须使用 `true/false`。吸附状态下起飞仍会被拒绝，需要先完成一次以脱附结束的爬行。

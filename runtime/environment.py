@@ -10,7 +10,7 @@ from env.flight_state_machine import FlightState
 from env.scenes import get_scene, load_scene_model
 from env.mmuav_env import MMUAVEnv, POSITION_AUTO_NONE
 from observations import MuJoCoObservationProvider, ObservationConfig, collect_for_agent
-from tools import FlyWaypointTool, LandTool, TakeoffTool
+from tools import CrawlTool, FlyWaypointTool, LandTool, TakeoffTool
 from tools.tasks import PlanningRequest
 from .events import EventBus, describe_error
 from .preview import PreviewRenderer, WorldCamera
@@ -150,7 +150,7 @@ class EnvironmentRuntime:
             if self._active is not None:
                 raise RuntimeError("Another tool is running")
             registry = {
-                tool.name: tool for tool in (TakeoffTool, LandTool, FlyWaypointTool)
+                tool.name: tool for tool in (TakeoffTool, LandTool, FlyWaypointTool, CrawlTool)
             }
             Tool = registry[command["tool"]]
             tool = Tool(self._env, self._env.agent_state_machine)

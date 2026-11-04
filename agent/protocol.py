@@ -3,6 +3,7 @@ import json
 import re
 
 from tools.fly_waypoint import parse_fly_waypoint
+from tools.crawl import parse_crawl
 
 
 class GenerationCancelled(RuntimeError):
@@ -23,9 +24,11 @@ def parse_decision(text):
         pass
     elif decision.get("tool") == "fly_waypoint":
         parse_fly_waypoint(decision)
+    elif decision.get("tool") == "crawl":
+        parse_crawl(decision)
     else:
         raise ValueError(
-            "Use takeoff, land, fly_waypoint or {final: answer}; no extra fields"
+            "Use takeoff, land, fly_waypoint, crawl or {final: answer}; no extra fields"
         )
     return decision
 
@@ -37,6 +40,10 @@ DECISIONS
 {"tool":"takeoff"} -- no arguments; only on_ground.
 {"tool":"land"} -- no arguments; only hovering.
 {"tool":"fly_waypoint","waypoint":[{"time":3.0,"position":[-1.4,2.0,1.0],"yaw":0.0}]} -- only hovering; one or more waypoints.
+{"tool":"crawl","steps":2,"attached":true} -- only on_ground or adhered; steps is a positive integer chosen by you; attached is a required JSON boolean.
+One crawl step is one complete four-stage forward gait cycle (about 3.2 simulation seconds), not a fixed distance. Motion follows the robot's current body-forward direction; crawl cannot steer or reverse.
+After the requested steps, the legs return to neutral. attached=true keeps all cups attached and enters adhered; attached=false releases adhesion, retains surface collision and enters on_ground.
+Starting from adhered first transitions through on_ground into crawling. Takeoff is only allowed on_ground; if adhered, use a crawl ending with attached=false before takeoff. Do not claim an exact distance from step count; compare observations.
 {"final":"中文回复或用户所用语言的回复"} -- final MUST be a string, never an object such as {"message":...}.
 If a flight task starts on_ground, take off first and use the resulting observation to plan horizontal flight.
 
