@@ -123,7 +123,7 @@ class DesktopTests(unittest.TestCase):
         window.scene_selector.setCurrentIndex(3)
         window.reload_scene_button.click()
         self.assertEqual(runner.reloaded_scene, "map4")
-        self.assertIn("原地图", window.scene_status.text())
+        self.assertIn("地图 1", window.scene_status.text())
         idle_status = runner.get_status
         runner.get_status = lambda: {**idle_status(), "busy": True}
         window._refresh()
@@ -137,9 +137,11 @@ class DesktopTests(unittest.TestCase):
         )
         window.system_prompt.setPlainText("Custom JSON protocol")
         window.setting_fields["max_decisions"].setValue(3)
+        window.setting_fields["process_sample_interval"].setValue(.75)
         window.apply_settings.click()
         self.assertEqual(runner.config.system_prompt, "Custom JSON protocol")
         self.assertEqual(runner.config.max_decisions, 3)
+        self.assertEqual(runner.config.process_sample_interval, .75)
         window.include_depth.setChecked(True)
         window.setting_fields["depth_size"].setValue(80)
         window.apply_settings.click()

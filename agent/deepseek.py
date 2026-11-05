@@ -9,42 +9,25 @@ import httpx
 
 from .backends import DeepSeekConfig
 from .protocol import GenerationCancelled
+from .messages import image_groups
 
 
-def image_messages(messages, image, index, extra_images=None):
+def image_messages(messages, image, index, extra_images=None, message_images=None):
     result = [dict(message) for message in messages]
-    if image is None:
-        return result
-    index = len(result) - 1 if index is None else index
-    if (
-        isinstance(index, bool)
-        or not isinstance(index, int)
-        or not 0 <= index < len(result)
-        or result[index].get("role") != "user"
-    ):
-        raise ValueError("图片必须绑定到对应的 user 观测消息。")
-    buffer = BytesIO()
-    image.convert("RGB").save(buffer, format="PNG")
-    url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
-    result[index]["content"] = [
-        {"type": "text", "text": result[index]["content"]},
-        {"type": "image_url", "image_url": {"url": url}},
-    ]
-    for name, attachment in (extra_images or {}).items():
-        buffer = BytesIO()
-        attachment.convert("RGB").save(buffer, format="PNG")
-        url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode(
-            "ascii"
-        )
-        result[index]["content"].extend(
-            [
-                {
+    for position, attachments in image_groups(
+            messages, image, index, extra_images, message_images).items():
+        blocks = [{"type": "text", "text": result[position]["content"]}]
+        for name, attachment in attachments.items():
+            buffer = BytesIO()
+            attachment.convert("RGB").save(buffer, format="PNG")
+            url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+            if name != "rgb":
+                blocks.append({
                     "type": "text",
                     "text": f"Image attachment: {name}. Interpret using observation metadata.",
-                },
-                {"type": "image_url", "image_url": {"url": url}},
-            ]
-        )
+                })
+            blocks.append({"type": "image_url", "image_url": {"url": url}})
+        result[position]["content"] = blocks
     return result
 
 
@@ -98,6 +81,7 @@ class DeepSeekBackend:
         image=None,
         extra_images=None,
         image_message_index=None,
+        message_images=None,
         max_new_tokens=4096,
         cancel_event=None,
     ):
@@ -115,7 +99,7 @@ class DeepSeekBackend:
             raise ValueError("messages 与 prompt/system 不能同时提供。")
         if not messages or messages[-1].get("role") != "user":
             raise ValueError("请求必须以 user 消息结束。")
-        prepared = image_messages(messages, image, image_message_index, extra_images)
+        prepared = image_messages(messages, image, image_message_index, extra_images, message_images)
         if not any("json" in str(m.get("content", "")).lower() for m in messages):
             prepared.insert(
                 0,

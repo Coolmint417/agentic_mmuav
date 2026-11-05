@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import math
 import queue
 import threading
 
@@ -13,19 +14,20 @@ from .backends import DeepSeekConfig, load_backend as _load_backend
 @dataclass(frozen=True)
 class RunnerConfig:
     max_new_tokens: int = 384
-    max_decisions: int = 16
+    max_decisions: int = 32
     max_parse_retries: int = 2
-    history_messages: int = 12
+    history_messages: int = 24
     max_context_chars: int = 24000
     system_prompt: str = SYSTEM_PROMPT
     include_depth: bool = False
     depth_size: int = 56
+    process_sample_interval: float = 1.0
 
     def __post_init__(self):
         if not isinstance(self.system_prompt, str) or not self.system_prompt.strip():
             raise ValueError("System prompt must be a nonempty string")
         for name, value in vars(self).items():
-            if name in {"system_prompt", "include_depth"}:
+            if name in {"system_prompt", "include_depth", "process_sample_interval"}:
                 continue
             if (
                 isinstance(value, bool)
@@ -33,6 +35,11 @@ class RunnerConfig:
                 or value < (0 if name == "max_parse_retries" else 1)
             ):
                 raise ValueError(f"Invalid runner setting: {name}")
+        if (isinstance(self.process_sample_interval, bool)
+                or not isinstance(self.process_sample_interval, (int, float))
+                or not math.isfinite(self.process_sample_interval)
+                or self.process_sample_interval <= 0):
+            raise ValueError("过程观测采样间隔必须为正有限秒数")
         if not isinstance(self.include_depth, bool) or not 8 <= self.depth_size <= 1024:
             raise ValueError("深度开关必须为布尔值，深度分辨率需在 8～1024 之间。")
 
@@ -163,6 +170,22 @@ class AgentRunner:
         if self._cancel.is_set():
             raise GenerationCancelled("本轮已取消，已丢弃模型输出。")
 
+    @staticmethod
+    def _context_chars(item):
+        try:
+            value = json.loads(item["content"])
+            observation = value.get("observation") if isinstance(value, dict) else None
+            if isinstance(observation, dict) and "process" in observation:
+                observation.pop("process")
+                observation.pop("image_order", None)
+                for key in list(observation):
+                    if key.startswith("process_rgb_"):
+                        del observation[key]
+                return len(json.dumps(value, ensure_ascii=False))
+        except (ValueError, TypeError):
+            pass
+        return len(item["content"])
+
     def _bounded(self, history, *, required_index=None):
         # Keep the current observation with its task/RGB even after JSON retries.
         start = max(0, len(history) - self.config.history_messages)
@@ -172,18 +195,18 @@ class AgentRunner:
         while (
             len(result) > 1
             and (required_index is None or start < required_index)
-            and sum(len(item["content"]) for item in result)
+            and sum(self._context_chars(item) for item in result)
             > self.config.max_context_chars
         ):
             result = result[1:]
             start += 1
-        if sum(len(item["content"]) for item in result) > self.config.max_context_chars:
+        if sum(self._context_chars(item) for item in result) > self.config.max_context_chars:
             raise ValueError("当前输入或观测过长，请缩短任务描述或观测内容。")
         return result
 
     @staticmethod
-    def _append_observation(history, packet, *, task=None, tool_result=None):
-        # Old text observations remain useful; old image attachments do not.
+    def _discard_process_samples(history):
+        # Preserve observation keyframes; discard only earlier process samples.
         for item in history:
             if item["role"] == "user":
                 try:
@@ -194,12 +217,23 @@ class AgentRunner:
                         else None
                     )
                     if isinstance(observation, dict) and "rgb" in observation:
-                        observation["rgb"] = {"not_retained": True}
-                        if "depth" in observation:
-                            observation["depth"] = {"not_retained": True}
+                        observation.pop("process", None)
+                        item["_images"] = {
+                            name: image for name, image in item.get("_images", {}).items()
+                            if not name.startswith("process_rgb_")
+                        }
+                        if "image_order" in observation:
+                            observation["image_order"] = list(item["_images"])
+                        for key in list(observation):
+                            if key.startswith("process_rgb_"):
+                                del observation[key]
                         item["content"] = json.dumps(previous, ensure_ascii=False)
                 except (ValueError, TypeError):
                     pass
+
+    @staticmethod
+    def _append_observation(history, packet, *, task=None, tool_result=None):
+        AgentRunner._discard_process_samples(history)
         value = {"observation": packet.to_dict(embed_images=False)}
         if task is not None:
             value["task"] = task
@@ -209,13 +243,15 @@ class AgentRunner:
             {
                 "role": "user",
                 "content": json.dumps(value, ensure_ascii=False, allow_nan=False),
+                "_images": {name: image.copy() for name, image in packet.images.items()},
             }
         )
 
     def _run_turn(self, text):
         self._check_cancelled()
         (turn_id, packet,) = self.runtime.begin_turn(
-            include_depth=self.config.include_depth, depth_size=self.config.depth_size
+            include_depth=self.config.include_depth, depth_size=self.config.depth_size,
+            process_sample_interval=self.config.process_sample_interval,
         )
         history = [dict(item) for item in self._conversation]
         self._append_observation(history, packet, task=text)
@@ -227,19 +263,23 @@ class AgentRunner:
             self.runtime.validate_turn(turn_id)
             inputs = packet.to_model_inputs()
             bounded_history = self._bounded(history, required_index=observation_index)
+            image_message_index = (
+                next(index for index, item in enumerate(bounded_history, start=1)
+                     if item is history[observation_index])
+                if inputs.get("image") is not None else None
+            )
+            # Image objects remain private to the runner; HTTP/logged messages
+            # contain only role/content. Indices are rebuilt after history trimming.
             messages = [
                 {"role": "system", "content": self.config.system_prompt},
-                *bounded_history,
+                *({"role": item["role"], "content": item["content"]}
+                  for item in bounded_history),
             ]
-            image_message_index = (
-                next(
-                    index
-                    for index, item in enumerate(messages)
-                    if item is history[observation_index]
-                )
-                if inputs.get("image") is not None
-                else None
-            )
+            message_images = {
+                index: item["_images"]
+                for index, item in enumerate(bounded_history, start=1)
+                if index != image_message_index and item.get("_images")
+            }
             self.events.publish("phase", "THINK")
             self._log(
                 "model_input",
@@ -251,6 +291,10 @@ class AgentRunner:
                     "image_size": list(inputs["image"].size)
                     if inputs.get("image") is not None
                     else None,
+                    "historical_image_sizes": {
+                        str(index): {name: list(image.size) for name, image in images.items()}
+                        for index, images in message_images.items()
+                    },
                     "extra_image_sizes": {
                         name: list(image.size)
                         for name, image in inputs.get("extra_images", {}).items()
@@ -263,6 +307,7 @@ class AgentRunner:
                 image_message_index=image_message_index,
                 max_new_tokens=self.config.max_new_tokens,
                 cancel_event=self._cancel,
+                **({"message_images": message_images} if message_images else {}),
                 **(
                     {"extra_images": inputs["extra_images"]}
                     if "extra_images" in inputs
@@ -320,6 +365,7 @@ class AgentRunner:
             self._log("decision", turn_id, decision)
             if "final" in decision:
                 self.runtime.finish_turn(turn_id)
+                self._discard_process_samples(history)
                 self._conversation = self._bounded(history)
                 self._chat(decision["final"], "assistant")
                 return

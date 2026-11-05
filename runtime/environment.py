@@ -10,6 +10,7 @@ from env.flight_state_machine import FlightState
 from env.scenes import get_scene, load_scene_model
 from env.mmuav_env import MMUAVEnv, POSITION_AUTO_NONE
 from observations import MuJoCoObservationProvider, ObservationConfig, collect_for_agent
+from observations.process import ProcessObservation
 from tools import CrawlTool, FlyWaypointTool, LandTool, TakeoffTool
 from tools.tasks import PlanningRequest
 from .events import EventBus, describe_error
@@ -54,6 +55,8 @@ class EnvironmentRuntime:
         self._camera = "fpv_camera"
         self._cancel_callback = None
         self._active = None
+        self._process_pending = None
+        self._process_interval = 1.0
         self._thread = None
 
     def start(self):
@@ -106,7 +109,9 @@ class EnvironmentRuntime:
         ):
             raise RuntimeError("Agent turn was cancelled or replaced")
 
-    def begin_turn(self, *, include_depth=False, depth_size=56):
+    def begin_turn(self, *, include_depth=False, depth_size=56, process_sample_interval=1.0):
+        # Validate before changing any turn state.
+        ProcessObservation.validate_interval(process_sample_interval)
         def begin():
             self._env.require_agent_control()  # Read Axis4 before any prompt is sent.
             config = replace(
@@ -120,6 +125,8 @@ class EnvironmentRuntime:
                 self._observer = new_observer
             agent = self._env.agent_state_machine
             agent.start_turn()
+            self._process_pending = None
+            self._process_interval = process_sample_interval
             return agent.turn_id, self._observer.collect()
 
         return self._invoke(begin)
@@ -138,7 +145,11 @@ class EnvironmentRuntime:
     def collect_observation(self, turn_id):
         def collect():
             self._validate_turn(turn_id)
-            return collect_for_agent(self._observer, self._env)
+            packet = collect_for_agent(self._observer, self._env)
+            pending, self._process_pending = self._process_pending, None
+            if pending is not None and pending[0] == turn_id:
+                packet = pending[1].attach(packet)
+            return packet
 
         return self._invoke(collect)
 
@@ -155,7 +166,11 @@ class EnvironmentRuntime:
             Tool = registry[command["tool"]]
             tool = Tool(self._env, self._env.agent_state_machine)
             self._env.agent_state_machine.complete_think(ThinkOutcome.TOOL)
+            self._process_pending = None
             self._active = {
+                "turn_id": turn_id,
+                "process": ProcessObservation(command["tool"], self._env.observe()["time"],
+                                              self._process_interval),
                 "task": tool.iter_execute(command),
                 "completion": completion,
                 "planning": None,
@@ -196,6 +211,7 @@ class EnvironmentRuntime:
                 self._preview.close()
                 self._preview = None
             self._observer.close()
+            self._process_pending = None
             self._env.reload_scene(scene_id, scene_model=model)
             self._world_camera = WorldCamera(self._env.model, self._env.data)
             self._observer = MuJoCoObservationProvider(self._env, observer_config)
@@ -235,6 +251,7 @@ class EnvironmentRuntime:
         return self._post(reset)
 
     def _cancel_task(self, reason):
+        self._process_pending = None
         active, self._active = self._active, None
         if active is not None:
             if active["planning"] is not None:
@@ -273,6 +290,9 @@ class EnvironmentRuntime:
         if active is None:
             return
         try:
+            if (self._env.agent_control_enabled
+                    and self._env.agent_state_machine.state is AgentState.EXECUTE):
+                active["process"].sample(self._observer, self._env.observe()["time"])
             planning = active["planning"]
             if planning is not None:
                 if not planning.done():
@@ -293,6 +313,8 @@ class EnvironmentRuntime:
                 active["planning"] = self._planner.submit(request.compute)
         except StopIteration as done:
             if self._active is active:
+                active["process"].end_time = self._env.observe()["time"]
+                self._process_pending = (active["turn_id"], active["process"])
                 self._active = None
             if not active["completion"].done():
                 active["completion"].set_result(done.value)

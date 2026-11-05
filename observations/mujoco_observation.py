@@ -99,7 +99,7 @@ class MuJoCoObservationProvider(ObservationProvider):
             )
         return self._renderer
 
-    def collect(self) -> ObservationPacket:
+    def collect(self, *, include_depth=None) -> ObservationPacket:
         if self._closed:
             raise RuntimeError("Observation provider is closed")
         self.environment.observe()  # Reject a closed environment.
@@ -119,6 +119,8 @@ class MuJoCoObservationProvider(ObservationProvider):
             "sim_time_seconds": float(data.time),
             "coordinate_frame": "NWU",
             "position_m": data.qpos[:3].tolist(),
+            "velocity_m_s": data.qvel[:3].tolist(),
+            "angular_velocity_rad_s_body": data.qvel[3:6].tolist(),
             "attitude": _attitude(data.qpos[3:7]),
             "flight_state": self.environment.flight_state_machine.state.value,
             "rgb": {"camera": self.config.camera_name},
@@ -127,7 +129,8 @@ class MuJoCoObservationProvider(ObservationProvider):
         renderer.update_scene(data, camera=self.config.camera_name)
         image = Image.fromarray(renderer.render().copy())
         images = {"rgb": image}
-        if self.config.include_depth:
+        want_depth = self.config.include_depth if include_depth is None else include_depth
+        if want_depth:
             if self._depth_renderer is None:
                 size = self.config.depth_size
                 self._model.vis.global_.offwidth = max(

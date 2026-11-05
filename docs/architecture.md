@@ -200,7 +200,7 @@ flowchart LR
 }
 ```
 
-工具后的同类消息额外带 `tool_result`，并再次带上原 `task`。最新 RGB / 可选深度始终绑定该条观测；JSON 修正消息不会改变绑定。旧观测文本保留，旧图像标记 `not_retained`，不重复发送附件。`ObservationPacket.to_json()` 也支持自包含 PNG/base64 JSON，但桌面 runner 使用附件路径。
+工具后的同类消息额外带 `tool_result`，并再次带上原 `task`。最新 RGB / 可选深度始终绑定该条观测；JSON 修正消息不会改变绑定。历史观测保留文本状态和关键帧 RGB/可选深度，后端将每组图片绑定原始 user 消息；旧工具的过程采样图片及逐帧传感数据删除，不发送 `sample_count`。只有最近一次工具的过程采样参与当前推理与格式修正，历史关键帧随消息数量/字符预算同步裁剪。`ObservationPacket.to_json()` 也支持自包含 PNG/base64 JSON，但桌面 runner 使用附件路径。
 
 深度默认不发送，开启后附加 `observation.depth` 元数据和第二张图：相机前向 Z 深度（米），灰度固定编码 0～10 米，白近黑远，附 3×3 区域最近深度等统计。模型观测分辨率与界面预览分辨率独立。未来点云可通过替换 `ObservationProvider` 或 `extra_sensors → extras` 扩展，当前尚未实现点云观测。
 

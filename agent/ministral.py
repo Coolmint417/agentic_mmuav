@@ -13,7 +13,7 @@ from transformers import (
     StoppingCriteriaList,
 )
 from .protocol import GenerationCancelled
-from .messages import attach_image
+from .messages import prepare_hf_images
 
 MODEL_ID = "mistralai/Ministral-3-3B-Instruct-2512"
 FP8_KERNEL_REVISION = "8c178950e8710e26a2210e4e909cd02dc16c8715"
@@ -105,6 +105,7 @@ class MinistralBackend:
         max_new_tokens: int = 128,
         messages=None,
         image_message_index=None,
+        message_images=None,
         cancel_event=None
     ) -> dict:
         if cancel_event is not None and cancel_event.is_set():
@@ -122,21 +123,20 @@ class MinistralBackend:
             messages.append({"role": "user", "content": prompt})
         if not messages or messages[-1].get("role") != "user":
             raise ValueError("Generation messages must end with a user observation")
-        if image is not None:
-            messages = attach_image(
-                messages, image_message_index, tuple(extra_images or {})
-            )
+        messages, ordered_images = prepare_hf_images(
+            messages, image, image_message_index, extra_images, message_images
+        )
         # Render the HF text chat template, then let PixtralProcessor expand
         # [IMG] into the correct number of image tokens for this checkpoint.
         text = self.tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        if image is None:
+        if not ordered_images:
             inputs = self.tokenizer(text, add_special_tokens=False, return_tensors="pt")
         else:
             inputs = self.processor(
                 text=text,
-                images=[image, *(extra_images or {}).values()],
+                images=ordered_images,
                 add_special_tokens=False,
                 return_tensors="pt",
             )

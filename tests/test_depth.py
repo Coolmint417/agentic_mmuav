@@ -142,7 +142,9 @@ class DepthTests(unittest.TestCase):
                 if isinstance(msg["content"], list)
                 for block in msg["content"]
             )
-            self.assertEqual(image_count, 1)
+            # Disabling depth affects the new observation; the historical
+            # observation retains the RGB/depth pair that was actually captured.
+            self.assertEqual(image_count, 3)
 
     def test_local_backend_image_markers(self):
         messages = [

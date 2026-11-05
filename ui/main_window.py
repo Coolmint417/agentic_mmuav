@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QSpinBox,
+    QDoubleSpinBox,
     QTabWidget,
     QScrollArea,
     QComboBox,
@@ -317,7 +318,7 @@ class AgentWindow(QMainWindow):
                 "上下文字符上限",
                 1,
                 10000000,
-                "历史文本字符数上限；不是模型 token 数，也不包含 system prompt 和图像。",
+                "历史文本字符数上限；不含 system prompt、图像及当前工具的逐帧过程数据，不是 token 限制。",
             ),
         ):
             field = QSpinBox()
@@ -325,6 +326,14 @@ class AgentWindow(QMainWindow):
             field.setToolTip(help_text)
             self.setting_fields[key] = field
             form.addRow(title, field)
+        interval = QDoubleSpinBox()
+        interval.setRange(0.01, 86400.0)
+        interval.setDecimals(2)
+        interval.setSingleStep(0.1)
+        interval.setSuffix(" s")
+        interval.setToolTip("按仿真时间采集过程 RGB 和运动数据，不采集过程深度；不限制帧数。")
+        self.setting_fields["process_sample_interval"] = interval
+        form.addRow("过程观测采样间隔", interval)
         layout.addLayout(form)
         self.include_depth.toggled.connect(self.setting_fields["depth_size"].setEnabled)
         buttons = QHBoxLayout()

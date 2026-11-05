@@ -151,3 +151,59 @@ MUJOCO_GL=egl OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m unittest discov
 
 测试包含真实 FPV 渲染、PNG/JSON 往返、分辨率调整、姿态/时间、采集副作用检查、
 扩展及替换 provider、采集失败、Axis4 撤销和轮次隔离，以及现有控制/工具回归测试。
+
+
+## 工具执行过程观测
+
+Environment Runtime 在工具执行期间按仿真时间采样，默认每 1 秒一次。
+Agent 设置页的“过程观测采样间隔”可修改该值，下一轮生效；最大执行轮数默认 32，
+历史消息数上限默认 24。过程帧没有数量上限，不裁剪、不均匀抽帧，也不发送过程深度。
+采样 RGB 使用模型观测分辨率（默认 224×224），与界面高分辨率预览独立。
+
+`observations/process.py` 的 `ProcessObservation` 缓存单次工具数据；每张 RGB 与运动数据
+来自 provider 的同一份私有 MjData 快照。采样不调用实时控制回调、不推进仿真。
+当前观测新增 `velocity_m_s`（世界系）和 `angular_velocity_rad_s_body`（机体系）字段。
+工具结束后 observation 增加以下数据，并通过命名附件发送过程 RGB：
+
+```json
+{
+  "process": {
+    "tool": "fly_waypoint",
+    "sample_interval_seconds": 1.0,
+    "start_time_seconds": 10.0,
+    "end_time_seconds": 14.5,
+    "coordinate_frame": "NWU",
+    "angular_velocity_frame": "body",
+    "frames": [{
+      "time": 11.0,
+      "elapsed_seconds": 1.0,
+      "position": [1.0, 2.0, 1.5],
+      "velocity": [0.3, 0.0, 0.0],
+      "rpy": [0.0, 0.01, 0.0],
+      "angular_velocity": [0.0, 0.0, 0.0],
+      "state": "fly_agent",
+      "rgb_attachment": "process_rgb_000000"
+    }]
+  }
+}
+```
+
+position 单位 m，velocity 单位 m/s，rpy 单位 rad，角速度单位 rad/s，time 为启动后的仿真秒。
+帧按时间排序，首帧在工具开始后的一个采样间隔；工具不足一个间隔时 frames 为空。
+只记录实际经过的仿真快照，不为漏过的时间点复制图片；结束时刻的帧由当前观测表示。
+
+DeepSeek 将每个过程 RGB 编码为 PNG/base64 image_url，附带附件名；HF 使用相同顺序的
+命名 [IMG] 占位符。两者都将图像绑定到本次观测消息，JSON 重试时仍保持原绑定。
+当前帧可继续按既有配置发送深度图，过程采样强制禁用深度。
+
+刚结束工具的过程帧会用于本次推理与 JSON 修正重试。加入新观测或结束当前任务时，
+删除旧过程逐帧数据及过程图片，不发送 `sample_count` 摘要。
+每次观测的关键帧 RGB 和可选深度继续随其原始 user 消息保留，连同原位置、时间、工具结果
+一起参与后续请求；历史消息被数量/字符预算裁剪时，其图片也同步不再发送。
+Runner 内部 `_images` 保存实际图像，传输时重建 `message_images` 索引，不将图像对象写入
+HTTP 消息或 JSON 日志。DeepSeek 为每条观测构造自己的多模态 content；HF 按消息顺序
+排列各条观测的 [IMG] 和像素数据。
+取消、Axis4 撤销、新任务及环境重载会清理过程缓存，避免跨工具、跨轮次混用。
+为遵守过程帧无数量上限，当前工具逐帧数据不受历史文本字符预算裁剪；
+API/本地模型的上下文、请求体与显存限制仍然适用。日志包含逐帧传感数据、附件名和尺寸，
+不写入图片 Base64。图片只存在本次运行内存中。
