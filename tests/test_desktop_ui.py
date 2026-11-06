@@ -51,6 +51,7 @@ class UIRuntime:
             "authorized": False,
             "agent_state": "end",
             "flight_state": "hovering",
+            "sucker_states": [True, False, True, False],
             "sim_time": 1.0,
             "position": [0.0, 0.0, 1.0],
             "yaw": 0.0,
@@ -120,6 +121,7 @@ class DesktopTests(unittest.TestCase):
         window.show()
         window._refresh()
         self.assertEqual(window.scene_selector.count(), 5)
+        self.assertEqual(window.status_labels["suckers"].text(), "开 / 关 / 开 / 关")
         window.scene_selector.setCurrentIndex(3)
         window.reload_scene_button.click()
         self.assertEqual(runner.reloaded_scene, "map4")

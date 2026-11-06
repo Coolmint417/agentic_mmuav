@@ -11,7 +11,7 @@ from env.scenes import get_scene, load_scene_model
 from env.mmuav_env import MMUAVEnv, POSITION_AUTO_NONE
 from observations import MuJoCoObservationProvider, ObservationConfig, collect_for_agent
 from observations.process import ProcessObservation
-from tools import CrawlTool, FlyWaypointTool, LandTool, TakeoffTool
+from tools import AggressivePerchTool, CrawlTool, FlyWaypointTool, LandTool, TakeoffTool
 from tools.tasks import PlanningRequest
 from .events import EventBus, describe_error
 from .preview import PreviewRenderer, WorldCamera
@@ -83,6 +83,17 @@ class EnvironmentRuntime:
 
     def set_cancel_callback(self, callback):
         self._cancel_callback = callback
+
+    def set_sucker_states(self, states):
+        """Change adhesion commands on the owner thread, without a turn gate."""
+        states = tuple(states) if isinstance(states, (list, tuple)) else states
+
+        def change():
+            result = self._env.set_sucker_states(states)
+            self._publish_snapshot()
+            return result
+
+        return self._post(change)
 
     def _post(self, function):
         if self._stop.is_set() or self._thread is None or not self._thread.is_alive():
@@ -161,7 +172,7 @@ class EnvironmentRuntime:
             if self._active is not None:
                 raise RuntimeError("Another tool is running")
             registry = {
-                tool.name: tool for tool in (TakeoffTool, LandTool, FlyWaypointTool, CrawlTool)
+                tool.name: tool for tool in (TakeoffTool, LandTool, FlyWaypointTool, CrawlTool, AggressivePerchTool)
             }
             Tool = registry[command["tool"]]
             tool = Tool(self._env, self._env.agent_state_machine)
@@ -335,6 +346,7 @@ class EnvironmentRuntime:
             "authority_source": self._env.control_authority_source,
             "agent_state": agent.state.value,
             "flight_state": self._env.flight_state_machine.state.value,
+            "sucker_states": list(self._env.flight_state_machine.sucker_states),
             "control_mode": self._env.flight_state_machine.control_mode.value,
             "sim_time": state["time"],
             "position": state["position"].tolist(),

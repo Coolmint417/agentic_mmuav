@@ -65,11 +65,15 @@ HOVERING 允许摇杆控制运动；Axis7 负责手动起降并同步飞行状�
 将腿平滑回到中立位，再恢复四个吸盘吸附并等待一个阶段，最后返回 ON_GROUND。
 爬行及收尾期间关闭旋翼、禁止起飞；Axis4 请求接管时先完成收尾，再授权 Agent。
 步态阶段时长为 `CRAWL_STAGE_DURATION=0.8` 秒，摆角为 `CRAWL_SERVO_AMPLITUDE=0.3` 弧度。
-CRAWLING 和预留的 ADHERED 状态分别只允许与 ON_GROUND 互相切换；ADHERED 未绑定遥控器通道，可由 `crawl` 工具的最终吸附参数进入。
+CRAWLING 与 ON_GROUND 互相切换；吸盘开关由独立的 `sucker_states` 四元布尔向量维护，顺序为左前、左后、右后、右前，可在任何运动状态和控制模式下修改。
 手动爬行停止后保持吸附；下次起飞前自动释放吸盘。Agent 接管后不读取 Axis6。
 Agent 可调用 `{"tool":"crawl","steps":2,"attached":true}`：一个四阶段周期算一步，
-仅允许 ON_GROUND / ADHERED；完成后按布尔值进入 ADHERED 或脱附后的 ON_GROUND。
+仅允许 ON_GROUND；完成后仍为 ON_GROUND，按 attached 设置四个吸盘开关。
 详见 [爬行工具](tools/README.md#爬行工具-crawl)。
+大角度吸附工具示例：`{"tool":"aggressive_perch","position":[2,0,1.5],"yaw":0,"wall_angle_deg":90,"time":2}`。
+仅允许悬停调用，position 表示表面接触中心；工具开启四吸盘、用 minimum-snap 规划法向接触，
+采用有界优化末端比推力（8～20 m/s²），限制 time≤2s、平均法向速度≥1m/s，并施加参考 Z≥0.25m。
+确认稳定接触后进入 ON_GROUND（表面支撑）并停桨，四个吸盘开关保持 true。角度、法线及超时约定见 [工具说明](tools/README.md#大角度自主吸附-aggressive_perch)。
 原 FLYING 状态已改名为 FLY_AGENT，专用于授权后的 agent 轨迹执行；Axis5 不再使用。
 `MMUAVEnv.set_model_stop_callback()` 已接入 runner 的生成取消事件。
 完整状态规则和入口见 [env/README.md](env/README.md)。

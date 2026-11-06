@@ -9,6 +9,29 @@ import numpy as np
 from .config_trajectory_optimizer import TrajectoryOptimizerConfig
 
 
+@dataclass(frozen=True)
+class TerminalThrustConstraint:
+    """Optimize alpha in a(T)=gravity+alpha*normal, with alpha in m/s²."""
+    normal: np.ndarray
+    gravity: np.ndarray
+    lower: float = 8.0
+    upper: float = 20.0
+
+    def __post_init__(self):
+        for name in ("normal", "gravity"):
+            value = np.asarray(getattr(self, name), dtype=float).copy()
+            if value.shape != (3,) or not np.isfinite(value).all():
+                raise ValueError(f"{name} must be a finite 3-vector")
+            value.setflags(write=False)
+            object.__setattr__(self, name, value)
+        if not np.isclose(np.linalg.norm(self.normal), 1., atol=1e-6):
+            raise ValueError("terminal thrust normal must be a unit vector")
+        if (any(isinstance(v, bool) or not isinstance(v, (int, float))
+                or not np.isfinite(v) for v in (self.lower, self.upper))
+                or not 0 < self.lower < self.upper):
+            raise ValueError("specific thrust bounds must satisfy 0 < lower < upper")
+
+
 @dataclass
 class TrajectoryState:
     t: float
@@ -33,11 +56,13 @@ class PiecewisePolynomialTrajectory:
         yaw_coeffs: np.ndarray,
         segment_durations: np.ndarray,
         config: TrajectoryOptimizerConfig | None = None,
+        terminal_specific_thrust: float | None = None,
     ) -> None:
         self.pos_coeffs = np.asarray(pos_coeffs, dtype=np.float64)
         self.yaw_coeffs = np.asarray(yaw_coeffs, dtype=np.float64)
         self.segment_durations = np.asarray(segment_durations, dtype=np.float64)
         self.config = config or TrajectoryOptimizerConfig()
+        self.terminal_specific_thrust = terminal_specific_thrust
         self.knot_times = np.concatenate(
             [np.zeros(1), np.cumsum(self.segment_durations)]
         )
@@ -72,6 +97,23 @@ class PiecewisePolynomialTrajectory:
         )
 
     __call__ = evaluate
+
+    def axis_extrema(self, axis: int) -> tuple[float, float, float, float]:
+        """Return (min_time, min_value, max_time, max_value), including all stationary points."""
+        if type(axis) is not int or not 0 <= axis < 3:
+            raise ValueError("axis must be 0, 1 or 2")
+        candidates = []
+        for segment, duration in enumerate(self.segment_durations):
+            # Roots in normalized time avoid poor scaling of long/short segments.
+            coefficients = self.pos_coeffs[segment, :, axis] * duration ** np.arange(self.pos_coeffs.shape[1])
+            roots = np.polynomial.polynomial.polyroots(np.polynomial.polynomial.polyder(coefficients))
+            times = [0., 1.] + [float(root.real) for root in roots
+                                if abs(root.imag) < 1e-7 and 0 < root.real < 1]
+            candidates.extend((float(self.knot_times[segment] + u * duration),
+                               float(np.polynomial.polynomial.polyval(u, coefficients))) for u in times)
+        minimum = min(candidates, key=lambda pair: pair[1])
+        maximum = max(candidates, key=lambda pair: pair[1])
+        return *minimum, *maximum
 
     def _locate_segment(self, t: float) -> tuple[int, float, float]:
         query_t = float(t)
@@ -117,6 +159,9 @@ class PolynomialTrajectoryOptimizer:
         yaw_rates: np.ndarray | None = None,
         *,
         waypoint_times: np.ndarray | None = None,
+        jerks: np.ndarray | None = None,
+        terminal_thrust: TerminalThrustConstraint | None = None,
+        z_bounds: tuple[float | None, float | None] | None = None,
     ) -> PiecewisePolynomialTrajectory:
         positions = _as_2d(positions, width=3, name="positions")
         yaws = np.asarray(yaws, dtype=np.float64).reshape(-1)
@@ -158,6 +203,25 @@ class PolynomialTrajectoryOptimizer:
             "yaw_rates",
         )
 
+        jerks, jerk_mask = _optional_masked_2d(jerks, positions.shape[0], 3, "jerks")
+        if z_bounds is not None:
+            if not isinstance(z_bounds, (list, tuple)) or len(z_bounds) != 2:
+                raise ValueError("z_bounds must be (lower, upper), with None for an open bound")
+            if any(v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
+                                     or not np.isfinite(v)) for v in z_bounds):
+                raise ValueError("z bounds must be finite numbers or None")
+            lower, upper = z_bounds
+            if ((lower is None and upper is None)
+                    or (lower is not None and upper is not None and lower >= upper)):
+                raise ValueError("z_bounds must specify a nonempty interval")
+            if ((lower is not None and np.any(positions[:, 2] < lower))
+                    or (upper is not None and np.any(positions[:, 2] > upper))):
+                raise ValueError("waypoint height lies outside z_bounds")
+        if terminal_thrust is not None:
+            if not isinstance(terminal_thrust, TerminalThrustConstraint):
+                raise TypeError("terminal_thrust must be TerminalThrustConstraint")
+            if acceleration_mask[-1]:
+                raise ValueError("terminal thrust cannot also fix terminal acceleration")
         opti = ca.Opti()
         pos_vars = [
             opti.variable(segment_durations.shape[0], self.config.k_pos + 1)
@@ -190,6 +254,8 @@ class PolynomialTrajectoryOptimizer:
             velocity_mask,
             accelerations,
             acceleration_mask,
+            jerks,
+            jerk_mask,
         )
         self._add_yaw_constraints(
             opti,
@@ -199,6 +265,24 @@ class PolynomialTrajectoryOptimizer:
             yaw_rates,
             yaw_rate_mask,
         )
+        specific_thrust = None
+        if terminal_thrust is not None:
+            specific_thrust = opti.variable()
+            opti.subject_to(opti.bounded(terminal_thrust.lower, specific_thrust, terminal_thrust.upper))
+            opti.set_initial(specific_thrust, (terminal_thrust.lower + terminal_thrust.upper) / 2)
+            last = len(segment_durations) - 1
+            for axis in range(3):
+                opti.subject_to(
+                    _poly_ca(pos_vars[axis], last, float(segment_durations[-1]), 2)
+                    == terminal_thrust.gravity[axis] + specific_thrust * terminal_thrust.normal[axis])
+        if z_bounds is not None:
+            for segment, duration in enumerate(segment_durations):
+                for time in np.linspace(0., float(duration), 101):
+                    height = _poly_ca(pos_vars[2], segment, float(time), 0)
+                    if z_bounds[0] is not None:
+                        opti.subject_to(height >= z_bounds[0])
+                    if z_bounds[1] is not None:
+                        opti.subject_to(height <= z_bounds[1])
         self._set_initial_guess(
             opti,
             pos_vars,
@@ -216,24 +300,44 @@ class PolynomialTrajectoryOptimizer:
                 "max_iter": self.config.max_iter,
             },
         )
-        solution = opti.solve()
+        for refinement in range(8):
+            solution = opti.solve()
+            pos_coeffs = np.zeros(
+                (segment_durations.shape[0], self.config.k_pos + 1, 3),
+                dtype=np.float64,
+            )
+            for axis in range(3):
+                pos_coeffs[:, :, axis] = solution.value(pos_vars[axis])
+            yaw_coeffs = np.asarray(solution.value(yaw_var)).reshape(
+                segment_durations.shape[0], self.config.k_yaw + 1
+            )
+            trajectory = PiecewisePolynomialTrajectory(
+                pos_coeffs=pos_coeffs,
+                yaw_coeffs=yaw_coeffs,
+                segment_durations=segment_durations,
+                config=self.config,
+                terminal_specific_thrust=(float(solution.value(specific_thrust))
+                                          if specific_thrust is not None else None),
+            )
 
-        pos_coeffs = np.zeros(
-            (segment_durations.shape[0], self.config.k_pos + 1, 3),
-            dtype=np.float64,
-        )
-        for axis in range(3):
-            pos_coeffs[:, :, axis] = solution.value(pos_vars[axis])
-        yaw_coeffs = np.asarray(solution.value(yaw_var)).reshape(
-            segment_durations.shape[0], self.config.k_yaw + 1
-        )
-
-        return PiecewisePolynomialTrajectory(
-            pos_coeffs=pos_coeffs,
-            yaw_coeffs=yaw_coeffs,
-            segment_durations=segment_durations,
-            config=self.config,
-        )
+            if z_bounds is None:
+                return trajectory
+            min_time, minimum, max_time, maximum = trajectory.axis_extrema(2)
+            violations = []
+            if z_bounds[0] is not None and minimum < z_bounds[0] - 1e-6:
+                violations.append((min_time, z_bounds[0], True))
+            if z_bounds[1] is not None and maximum > z_bounds[1] + 1e-6:
+                violations.append((max_time, z_bounds[1], False))
+            if not violations:
+                return trajectory
+            # Add constraints at the actual extrema between collocation points.
+            # Re-solve until the entire polynomial passes the extrema check.
+            for time, bound, is_lower in violations:
+                segment, tau, _ = trajectory._locate_segment(time)
+                height = _poly_ca(pos_vars[2], segment, tau, 0)
+                opti.subject_to(height >= bound if is_lower else height <= bound)
+            opti.set_initial(opti.x, solution.value(opti.x))
+        raise RuntimeError("trajectory failed continuous z bound verification")
 
     def _segment_durations(
         self,
@@ -260,6 +364,8 @@ class PolynomialTrajectoryOptimizer:
         velocity_mask: np.ndarray,
         accelerations: np.ndarray | None,
         acceleration_mask: np.ndarray,
+        jerks: np.ndarray | None,
+        jerk_mask: np.ndarray,
     ) -> None:
         num_segments = durations.shape[0]
         for axis, coeff in enumerate(pos_vars):
@@ -290,6 +396,11 @@ class PolynomialTrajectoryOptimizer:
                         == accelerations[segment + 1, axis]
                     )
 
+                if jerk_mask[segment]:
+                    opti.subject_to(_poly_ca(coeff, segment, 0.0, 3) == jerks[segment, axis])
+                if jerk_mask[segment + 1]:
+                    opti.subject_to(_poly_ca(coeff, segment, duration, 3) == jerks[segment + 1, axis])
+
             for knot in range(1, num_segments):
                 left_segment = knot - 1
                 right_segment = knot
@@ -297,6 +408,8 @@ class PolynomialTrajectoryOptimizer:
                 continuity_orders = set(
                     range(3, self.config.continuity_order_pos + 1)
                 )
+                if jerk_mask[knot]:
+                    continuity_orders.discard(3)
                 if self.config.continuity_order_pos >= 1 and not velocity_mask[knot]:
                     continuity_orders.add(1)
                 if self.config.continuity_order_pos >= 2 and not acceleration_mask[knot]:

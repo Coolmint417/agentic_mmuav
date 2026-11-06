@@ -4,5 +4,6 @@ from ._auto_flight import AutoFlightConfig
 from .takeoff import TakeoffTool
 from .land import LandTool
 from .crawl import CrawlTool
+from .aggressive_perch import AggressivePerchConfig, AggressivePerchTool
 
-__all__ = ["FlyWaypointConfig", "FlyWaypointTool", "AutoFlightConfig", "TakeoffTool", "LandTool", "CrawlTool"]
+__all__ = ["FlyWaypointConfig", "FlyWaypointTool", "AutoFlightConfig", "TakeoffTool", "LandTool", "CrawlTool", "AggressivePerchConfig", "AggressivePerchTool"]

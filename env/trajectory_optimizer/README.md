@@ -80,3 +80,27 @@ For `velocities`, `accelerations`, and `yaw_rates`, each knot can be left
 unconstrained by using `None` or `NaN`. At an unconstrained internal knot, the
 optimizer enforces derivative continuity between neighboring polynomial
 segments instead of pinning that derivative to a target value.
+
+
+`optimize(..., jerks=...)` optionally fixes third derivatives at each knot,
+using the same per-knot `None`/`NaN` convention as velocity and acceleration.
+Fixed internal jerk constraints replace the redundant C3 continuity equation.
+The `aggressive_perch` tool uses zero endpoint jerk and a nonzero terminal
+acceleration `a(T)=alpha*n+gravity` with optimized bounded alpha so body Z aligns with the surface outward normal.
+Its terminal velocity is `-0.4*n`, toward the surface, rather than a hover stop.
+
+
+For joint endpoint thrust optimization, pass
+`terminal_thrust=TerminalThrustConstraint(normal, gravity, lower=8.0, upper=20.0)`
+and leave the final acceleration knot unconstrained (`None` or NaN).
+The solver adds a scalar alpha and enforces `a(T)=gravity+alpha*normal`;
+`trajectory.terminal_specific_thrust` exposes its solution (None for ordinary trajectories).
+Passing a fixed final acceleration together with terminal_thrust is rejected.
+
+Optional `z_bounds=(lower, upper)` adds world-Z limits; either side can be None.
+Knot heights must already be inside the requested interval. The solver adds 101
+collocation samples per segment, then uses `trajectory.axis_extrema(2)` (derivative
+roots in normalized segment time) to check the full polynomial and add constraints
+at violating extrema. Up to 8 solves are allowed; unresolved violations raise an error.
+`axis_extrema(axis)` returns `(minimum_time, minimum_value, maximum_time, maximum_value)`.
+Ordinary fly_waypoint calls do not enable these optional thrust or Z constraints.

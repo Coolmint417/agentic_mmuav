@@ -27,8 +27,8 @@ flowchart TB
     subgraph OWNER["Environment Runtime · 唯一仿真 owner 线程"]
         RT["命令队列 / Future<br/>持续推进仿真与工具任务<br/>检查授权和 turn_id"]
         AS["AgentStateMachine<br/>对话轮次状态<br/>THINK / EXECUTE / OBSERVATION / END"]
-        FS["FlightStateMachine<br/>控制权：MANUAL / AGENT<br/>ON_GROUND / HOVERING / FLY_AGENT"]
-        TOOLS["本地工具注册表<br/>takeoff / land / fly_waypoint<br/>iter_execute 协作执行"]
+        FS["FlightStateMachine<br/>控制权：MANUAL / AGENT<br/>ON_GROUND / HOVERING / FLY_AGENT / CRAWLING<br/>独立 sucker_states：左前/左后/右后/右前"]
+        TOOLS["本地工具注册表<br/>takeoff / land / fly_waypoint / crawl / aggressive_perch<br/>iter_execute 协作执行"]
         OBS["可替换 ObservationProvider<br/>位置 / 姿态 / 飞行状态 / 仿真时间<br/>第一视角 RGB · 可选深度 · 扩展传感器"]
         ENV["MuJoCo / MMUAVEnv<br/>自动起降 · 位置目标 provider<br/>SE3 控制回路 · env.step()"]
         PREVIEW["独立预览渲染器<br/>缓存最新图像与状态快照"]
@@ -98,16 +98,24 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     direction LR
-    state "ON_GROUND：在地面" as GROUND
+    state "ON_GROUND：地面/斜面/墙面支撑静止" as GROUND
     state "HOVERING：位置控制 / 悬停" as HOVER
-    state "FLY_AGENT：执行 Agent 航点轨迹" as FLY
+    state "FLY_AGENT：执行 Agent 航点 / 吸附轨迹" as FLY
+    state "CRAWLING：地面或附着爬行" as CRAWL
 
     [*] --> GROUND
     GROUND --> HOVER: 自动起飞完成；Agent takeoff 或手动 Axis7
     HOVER --> GROUND: 自动降落完成；Agent land 或手动 Axis7
     HOVER --> FLY: Agent 已授权；fly_waypoint 规划后开始执行
     FLY --> HOVER: 最终航点稳定悬停完成；或成功安装中断保持指令
+    GROUND --> CRAWL: Axis6 / crawl 启动
+    CRAWL --> GROUND: 收腿完成，按工具参数决定是否吸附
+    FLY --> GROUND: aggressive_perch 确认稳定四吸盘接触并停桨
 ```
+
+吸盘状态与上面的运动状态图并行维护：`[左前, 左后, 右后, 右前]`。
+`set_sucker_states()` / `set_sucker_state()` 不检查当前运动状态或控制权；环境每步同步到 adhesion 与摩擦。
+爬行、起飞、吸附工具和遥控器的切换均写入同一个向量，观测/界面读取该向量。
 
 ```mermaid
 flowchart TB
@@ -115,20 +123,20 @@ flowchart TB
     DETECT -->|"是"| AXIS{"持续读取 Axis4"}
     DETECT -->|"否；桌面入口启用自动授权"| AGENT
     AXIS -->|"大于 0.5，视作 1"| AGENT["AGENT 控制权<br/>启用 Agent 状态机<br/>只使用 Axis4，屏蔽其余遥控器控制输入"]
-    AXIS -->|"未授权"| MANUAL["MANUAL 控制权<br/>Agent 禁用；提交任务时提示，不发送 prompt<br/>仅允许 ON_GROUND / HOVERING"]
-    AGENT -->|"Axis4 从授权变为未授权"| REVOKE["清除轨迹与自动起降目标<br/>锁定当前位置与 yaw<br/>Agent → END，取消当前模型 / 工具任务<br/>飞行状态 → HOVERING"]
+    AXIS -->|"未授权"| MANUAL["MANUAL 控制权<br/>Agent 禁用；提交任务时提示，不发送 prompt<br/>可处于 ON_GROUND / HOVERING / CRAWLING"]
+    AGENT -->|"Axis4 从授权变为未授权"| REVOKE["清除轨迹与自动起降目标<br/>锁定当前位置与 yaw<br/>Agent → END，取消当前模型 / 工具任务<br/>飞行中 → HOVERING；表面支撑静止则保持 ON_GROUND"]
     REVOKE --> MANUAL
     MANUAL -->|"Axis4 重新授权"| AGENT
     MANUAL --> RC["Axis7 边沿：触发自动起飞 / 降落<br/>HOVERING 下摇杆可移动无人机<br/>控制器始终采用位置模式"]
 ```
 
-源码：[`env/flight_state_machine.py`](../env/flight_state_machine.py)、[`env/mmuav_env.py`](../env/mmuav_env.py)。控制权是 `ControlMode` 字段，与三种飞行状态共同维护；不是第四种飞行状态。
+源码：[`env/flight_state_machine.py`](../env/flight_state_machine.py)、[`env/mmuav_env.py`](../env/mmuav_env.py)。控制权是 `ControlMode` 字段，与四种运动状态共同维护。另有独立四元 bool 吸盘开关 `sucker_states`，在任意运动状态/控制权下均可修改；它记录驱动命令，不代表实际接触。
 
-- 禁止 `ON_GROUND ↔ FLY_AGENT` 直接切换，必须经过 `HOVERING`。手动模式不能进入 `FLY_AGENT`；手动移动仍标为 `HOVERING`。
+- `ON_GROUND → FLY_AGENT` 必须经过 `HOVERING`；反向仅由 aggressive_perch 确认实际接触后直接返回表面支撑静止。手动模式不能进入 `FLY_AGENT`；手动移动仍标为 `HOVERING`。
 - 起飞 / 降落执行期间保留原飞行状态，完成后才变为目标状态。`fly_waypoint` 仅从 `HOVERING` 开始，规划时保持位置，执行轨迹时进入 `FLY_AGENT`。
 - 最终航点的位置、速度、yaw、角速度均满足容差，且连续稳定 `hover_seconds`（默认 1 秒）后，航点工具返回成功：飞行状态进入 `HOVERING`，Agent 进入 `OBSERVATION`。中间航点不逐个悬停。
 - 工具超时 / 异常会尝试安装当前位置保持指令；不能把失败或超时视为到达目标。保持失败时可能保留原飞行状态，并在结果中报告 `hold_error`。撤权则优先恢复手动目标，旧工具不得覆盖它。
-- 当前撤权实现会强制进入 `HOVERING`，即使之前在地面；该状态表示位置保持控制语义，不是接触传感器对离地或稳定性的确认。
+- 飞行中撤权进入 `HOVERING`；表面支撑静止的 `ON_GROUND` 保持原吸盘命令，爬行中撤权完成收尾。悬停状态本身不代表接触或稳定性确认。
 - 桌面入口无手柄时自动授权，既不自动起飞也不自动推理；终止按钮仍可用。此行为由 `auto_agent_without_joystick=True` 开启，独立构造环境的默认行为不同。
 
 ### 两个状态机如何配合
@@ -138,12 +146,13 @@ flowchart TB
 | 接收任务并采集初始观测 | END → THINK | 保持当前状态 |
 | 选择 takeoff | THINK → EXECUTE | 执行时 ON_GROUND，完成后 HOVERING |
 | 选择 fly_waypoint | THINK → EXECUTE | 规划时 HOVERING，飞行时 FLY_AGENT |
+| 选择 aggressive_perch 并确认稳定四吸盘接触 | THINK → EXECUTE → OBSERVATION | HOVERING → FLY_AGENT → ON_GROUND，sucker_states 全 true、停桨 |
 | 航点完成并稳定悬停 | EXECUTE → OBSERVATION | FLY_AGENT → HOVERING |
 | 选择 land 并完成 | THINK → EXECUTE → OBSERVATION | HOVERING → ON_GROUND |
 | 工具后观测采集完成 | OBSERVATION → THINK | 保持当前状态 |
 | 模型输出 final | THINK → END | 保持当前状态；不会自动降落 |
 | 用户终止 | 任意状态 → END | 取消运动并保持位置；运动中转为 HOVERING |
-| Axis4 撤销授权 | 任意状态 → END，并禁用 | 强制 HOVERING，恢复手动控制 |
+| Axis4 撤销授权 | 任意状态 → END，并禁用 | 飞行中 HOVERING；表面支撑保持 ON_GROUND；恢复手动控制 |
 
 ## 4. 模型与 Agent 的通信格式
 
@@ -206,7 +215,7 @@ flowchart LR
 
 ### 模型返回的决策
 
-每次只返回下列四类对象之一，无额外字段；当前使用自定义 JSON 决策协议，不是 OpenAI 原生 `tool_calls` / `role=tool` 消息协议。DeepSeek 的 JSON Output 只要求对象格式，工具字段和参数合法性仍由本地校验。
+每次只返回下列工具调用或 final 对象之一，无额外字段；当前使用自定义 JSON 决策协议，不是 OpenAI 原生 `tool_calls` / `role=tool` 消息协议。DeepSeek 的 JSON Output 只要求对象格式，工具字段和参数合法性仍由本地校验。
 
 ```json
 {"tool":"takeoff"}
@@ -219,6 +228,13 @@ flowchart LR
 ```json
 {"tool":"fly_waypoint","waypoint":[{"time":3.0,"position":[0.4,0.0,1.0],"yaw":0.0},{"time":5.5,"position":[1.0,0.0,1.0],"yaw":0.0}]}
 ```
+
+```json
+{"tool":"aggressive_perch","position":[2.0,0.0,1.5],"yaw":0.0,"wall_angle_deg":90.0,"time":2.0}
+```
+
+`aggressive_perch` 的 position 是表面接触区域中心，工具按吸盘偏移生成机体目标，约束末端
+`a=alpha*n+gravity`（alpha 默认在 8～20 m/s² 内优化）、`v=-0.4n`，仅从悬停调用，实际稳定接触后进入 ON_GROUND，独立 sucker_states 保持全 true。执行时间最多 2 s、平均法向速度至少 1 m/s，参考轨迹 Z≥0.25 m 并检查全曲线极值。详细法线约定和失败行为见 [工具说明](../tools/README.md#大角度自主吸附-aggressive_perch)。
 
 ```json
 {"final":"已完成任务。"}

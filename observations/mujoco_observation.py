@@ -6,6 +6,7 @@ from typing import Any, Callable, Mapping
 import mujoco
 import numpy as np
 from PIL import Image
+from env.flight_state_machine import SUCKER_NAMES
 
 from .base import ObservationPacket, ObservationProvider
 from .depth import depth_image, depth_metadata
@@ -123,6 +124,8 @@ class MuJoCoObservationProvider(ObservationProvider):
             "angular_velocity_rad_s_body": data.qvel[3:6].tolist(),
             "attitude": _attitude(data.qpos[3:7]),
             "flight_state": self.environment.flight_state_machine.state.value,
+            "sucker_states": list(self.environment.flight_state_machine.sucker_states),
+            "sucker_order": list(SUCKER_NAMES),
             "rgb": {"camera": self.config.camera_name},
         }
         renderer = self._get_renderer()

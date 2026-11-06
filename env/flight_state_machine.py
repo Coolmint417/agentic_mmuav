@@ -3,11 +3,15 @@ from enum import Enum
 
 
 class FlightState(str, Enum):
-    ON_GROUND = "on_ground"  # 在地面
+    ON_GROUND = "on_ground"  # 表面支撑（地面、斜面或墙面）
     HOVERING = "hovering"  # 悬停
     FLY_AGENT = "fly_agent"  # agent 轨迹飞行
     CRAWLING = "crawling"  # 爬行（包括停止收尾）
-    ADHERED = "adhered"  # 吸附
+
+
+# Physical actuator order: front-left, rear-left, rear-right, front-right.
+SUCKER_NAMES = ("sucker_upleft", "sucker_bottomleft",
+                "sucker_bottomright", "sucker_upright")
 
 
 class ControlMode(str, Enum):
@@ -22,7 +26,9 @@ class InvalidFlightTransition(ValueError):
 class FlightStateMachine:
     """Manage flight and ground locomotion transitions.
 
-    CRAWLING and ADHERED each connect only to ON_GROUND.
+    Suction commands are an independent four-boolean vector in SUCKER_NAMES
+    order; they can change in any flight state or authority mode. ON_GROUND
+    denotes surface-supported rest, including walls after confirmed perching.
 
     Defaults to ON_GROUND under MANUAL control. Repeating a state is a no-op.
     Manual stick motion stays HOVERING; FLY_AGENT is reserved for agent
@@ -31,16 +37,15 @@ class FlightStateMachine:
     """
 
     _TRANSITIONS = {
-        FlightState.ON_GROUND: frozenset({FlightState.HOVERING, FlightState.CRAWLING,
-                                        FlightState.ADHERED}),
+        FlightState.ON_GROUND: frozenset({FlightState.HOVERING, FlightState.CRAWLING}),
         FlightState.HOVERING: frozenset({FlightState.ON_GROUND, FlightState.FLY_AGENT}),
-        FlightState.FLY_AGENT: frozenset({FlightState.HOVERING}),
+        FlightState.FLY_AGENT: frozenset({FlightState.HOVERING, FlightState.ON_GROUND}),
         FlightState.CRAWLING: frozenset({FlightState.ON_GROUND}),
-        FlightState.ADHERED: frozenset({FlightState.ON_GROUND}),
     }
 
     def __init__(self, initial_state: FlightState = FlightState.ON_GROUND,
-                 *, control_mode: ControlMode = ControlMode.MANUAL):
+                 *, control_mode: ControlMode = ControlMode.MANUAL,
+                 sucker_states=(False, False, False, False)):
         self._validate_state(initial_state)
         if not isinstance(control_mode, ControlMode):
             raise TypeError("control_mode must be a ControlMode enum member")
@@ -48,6 +53,28 @@ class FlightStateMachine:
             raise InvalidFlightTransition("FLY_AGENT requires agent authority")
         self._control_mode = control_mode
         self._state = initial_state
+        self.set_sucker_states(sucker_states)
+
+    @property
+    def sucker_states(self) -> tuple[bool, bool, bool, bool]:
+        """Adhesion enable commands, not measurements of physical contact."""
+        return self._sucker_states
+
+    def set_sucker_states(self, states) -> tuple[bool, bool, bool, bool]:
+        """Atomically replace all four commands, independent of flight/mode."""
+        if not isinstance(states, (list, tuple)) or len(states) != 4:
+            raise ValueError("sucker_states must contain four booleans in SUCKER_NAMES order")
+        if any(type(value) is not bool for value in states):
+            raise ValueError("each sucker state must be a bool")
+        self._sucker_states = tuple(states)
+        return self._sucker_states
+
+    def set_sucker_state(self, index: int, enabled: bool) -> tuple[bool, bool, bool, bool]:
+        if type(index) is not int or not 0 <= index < 4:
+            raise ValueError("sucker index must be an integer in [0,3]")
+        states = list(self._sucker_states)
+        states[index] = enabled
+        return self.set_sucker_states(states)
 
     @property
     def control_mode(self) -> ControlMode:
@@ -58,14 +85,14 @@ class FlightStateMachine:
         return self._control_mode is ControlMode.AGENT
 
     def set_agent_authorized(self, enabled: bool) -> bool:
-        """Return whether authority changed; preserve ground locomotion on revocation."""
+        """Revocation holds airborne flight; preserve supported rest and suction."""
         if not isinstance(enabled, bool):
             raise TypeError("enabled must be a bool")
         mode = ControlMode.AGENT if enabled else ControlMode.MANUAL
         if mode is self._control_mode:
             return False
         self._control_mode = mode
-        if not enabled and self._state not in {FlightState.CRAWLING, FlightState.ADHERED}:
+        if not enabled and self._state is FlightState.FLY_AGENT:
             self.transition_to(FlightState.HOVERING)
         return True
 

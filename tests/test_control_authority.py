@@ -26,9 +26,9 @@ class FlightMachineTests(unittest.TestCase):
                         frozenset({FlightState.ON_GROUND, FlightState.HOVERING}),
                         frozenset({FlightState.HOVERING, FlightState.FLY_AGENT}),
                         frozenset({FlightState.ON_GROUND, FlightState.CRAWLING}),
-                        frozenset({FlightState.ON_GROUND, FlightState.ADHERED}),
                     }
                     allowed = (source is target or frozenset({source, target}) in links)
+                    allowed |= (source is FlightState.FLY_AGENT and target is FlightState.ON_GROUND)
                     allowed &= not (mode is ControlMode.MANUAL and target is FlightState.FLY_AGENT)
                     self.assertEqual(machine.can_transition_to(target), allowed)
                     if allowed:
@@ -43,7 +43,7 @@ class FlightMachineTests(unittest.TestCase):
         self.assertTrue(machine.set_agent_authorized(True))
         self.assertEqual(machine.state, FlightState.ON_GROUND)
         self.assertTrue(machine.set_agent_authorized(False))
-        self.assertEqual(machine.state, FlightState.HOVERING)
+        self.assertEqual(machine.state, FlightState.ON_GROUND)
         agent = AgentStateMachine()
         agent.start_turn()
         agent.set_enabled(False)

@@ -38,6 +38,7 @@ class ProcessObservation:
             "rpy": data["attitude"]["euler_rpy_rad"],
             "angular_velocity": data["angular_velocity_rad_s_body"],
             "state": data["flight_state"],
+            "sucker_states": data["sucker_states"],
             "rgb_attachment": name,
         })
         self.images[name] = packet.images["rgb"]

@@ -51,8 +51,8 @@ class CrawlTool:
         try:
             steps, attached = parse_crawl(command)
             self.environment.require_agent_control()
-            if self.flight.state not in {FlightState.ON_GROUND, FlightState.ADHERED}:
-                raise ValueError("crawl requires UAV ON_GROUND or ADHERED state")
+            if self.flight.state is not FlightState.ON_GROUND:
+                raise ValueError("crawl requires UAV ON_GROUND state")
             start = previous = self.environment.observe()["time"]
             self.environment.start_crawl(steps, attached)
             started = True
@@ -71,13 +71,15 @@ class CrawlTool:
                 previous = now
                 progress = self.environment.get_crawl_progress()
                 if not progress["running"]:
-                    expected = FlightState.ADHERED if attached else FlightState.ON_GROUND
-                    if progress["steps_completed"] != steps or self.flight.state is not expected:
+                    expected = FlightState.ON_GROUND
+                    if (progress["steps_completed"] != steps or self.flight.state is not expected
+                            or self.flight.sucker_states != (attached,) * 4):
                         raise RuntimeError("crawl stopped before reaching the requested result")
                     completed = True
                     return {"tool": self.name, "status": "success", "steps": steps,
                             "steps_completed": progress["steps_completed"], "attached": attached,
                             "flight_state": self.flight.state.value,
+                            "sucker_states": list(self.flight.sucker_states),
                             "elapsed_seconds": now - start,
                             "position": observation["position"].tolist(),
                             "yaw": float(observation["yaw"])}

@@ -222,6 +222,7 @@ class AgentWindow(QMainWindow):
         for key, title in (
             ("control", "控制权"),
             ("flight", "无人机状态"),
+            ("suckers", "吸盘（左前/左后/右后/右前）"),
             ("agent", "Agent 状态"),
             ("time", "仿真时间"),
             ("position", "世界位置 NWU / m"),
@@ -582,6 +583,9 @@ class AgentWindow(QMainWindow):
             else ("AGENT / Axis4=1" if state.get("authorized") else "MANUAL / Axis4=0")
         )
         self.status_labels["flight"].setText(state.get("flight_state", "—"))
+        self.status_labels["suckers"].setText(
+            " / ".join("开" if enabled else "关" for enabled in state["sucker_states"])
+            if "sucker_states" in state else "—")
         self.status_labels["agent"].setText(state.get("agent_state", "—").upper())
         self.status_labels["time"].setText(f'{state.get("sim_time", 0.):.2f} s')
         camera_state = state.get("world_camera")

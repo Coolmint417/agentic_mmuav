@@ -14,7 +14,7 @@ if __package__:
     from .controller.gyro_filter import GyroLowPassFilter
     from .controller.se3_controller import SE3Controller, VehicleState
     from .controller.motor_mixer import Mixer
-    from .flight_state_machine import FlightState, FlightStateMachine
+    from .flight_state_machine import FlightState, FlightStateMachine, SUCKER_NAMES
     from .scenes import load_scene_model
     from . import geometry
 else:
@@ -22,7 +22,7 @@ else:
     from controller.gyro_filter import GyroLowPassFilter
     from controller.se3_controller import SE3Controller, VehicleState
     from controller.motor_mixer import Mixer
-    from flight_state_machine import FlightState, FlightStateMachine
+    from flight_state_machine import FlightState, FlightStateMachine, SUCKER_NAMES
     from scenes import load_scene_model
     import geometry
 
@@ -58,8 +58,7 @@ CRAWL_STAGE_DURATION = 0.8
 CRAWL_SERVO_AMPLITUDE = 0.3
 CRAWL_ATTACHED_FRICTION = 3.0
 CRAWL_RELEASE_FRICTION = 0.05
-SUCKER_GEOMS = ("sucker_upleft", "sucker_bottomleft",
-                "sucker_bottomright", "sucker_upright")  # actuator order 1:5
+SUCKER_GEOMS = SUCKER_NAMES  # actuator order 1:5
 
 
 class JoystickReader:
@@ -169,6 +168,9 @@ land_still_time = 0.0
 flight_state_machine = FlightStateMachine()
 agent_state_machine = None
 model_stop_callback = None
+perch_active = False
+perch_motor_idle = False
+perch_saved_gains = None
 
 
 xml_path = os.path.join(os.path.dirname(__file__), './scene.xml')
@@ -198,7 +200,7 @@ def load_callback(m=None, d=None, *, flight_machine=None, agent_machine=None,
     global last_time_crawl, crawl_stage, crawl_axis_positive
     global crawl_stop_requested, crawl_finishing, crawl_neutral_start
     global crawl_step_limit, crawl_steps_completed, crawl_end_attached
-    global sucker_contact_defaults
+    global sucker_contact_defaults, perch_active, perch_motor_idle, perch_saved_gains
     mujoco.set_mjcb_control(None)
     m = scene_model if scene_model is not None else mujoco.MjModel.from_xml_path(xml_path)
     d = mujoco.MjData(m)
@@ -211,6 +213,8 @@ def load_callback(m=None, d=None, *, flight_machine=None, agent_machine=None,
     if agent_state_machine is not None:
         agent_state_machine.set_enabled(flight_state_machine.agent_authorized)
     planner_target_provider = None
+    perch_active = perch_motor_idle = False
+    perch_saved_gains = None
     last_time = 0.0
     yaw_command = 0.0
     takeoff_land_axis_last_sign = 0
@@ -356,8 +360,15 @@ sucker_contact_defaults = {}
 
 
 def _set_sucker_attachment(m, d, attached):
-    """Switch adhesion and sliding friction together, retaining normal support."""
-    for index, (name, enabled) in enumerate(zip(SUCKER_GEOMS, attached), start=1):
+    """All manual/tool command changes go through the shared state vector."""
+    flight_state_machine.set_sucker_states(attached)
+    _apply_sucker_states(m, d)
+
+
+def _apply_sucker_states(m, d):
+    """Apply commands (including direct FSM updates) without changing flight state."""
+    for index, (name, enabled) in enumerate(
+            zip(SUCKER_GEOMS, flight_state_machine.sucker_states), start=1):
         geom = m.geom(name)
         geom.contype = 1
         geom.conaffinity = 1
@@ -370,15 +381,23 @@ def _set_sucker_attachment(m, d, attached):
         d.ctrl[index] = float(enabled)
 
 
+def _reset_perch_control(d, *, release=True):
+    global perch_active, perch_motor_idle, perch_saved_gains
+    if perch_saved_gains is not None:
+        position_controller.set_parameters(*perch_saved_gains)
+    perch_saved_gains = None
+    perch_active = perch_motor_idle = False
+    if release:
+        _set_sucker_attachment(d.model, d, (False,) * 4)
+
+
 def _start_crawl(d, *, steps=None, attached=True):
     global last_time_crawl, crawl_stage, crawl_stop_requested, crawl_finishing
     global crawl_step_limit, crawl_steps_completed, crawl_end_attached
-    if flight_state_machine.state not in {FlightState.ON_GROUND, FlightState.ADHERED}:
-        raise ValueError("crawl requires UAV ON_GROUND or ADHERED state")
+    if flight_state_machine.state is not FlightState.ON_GROUND:
+        raise ValueError("crawl requires UAV ON_GROUND state")
     if position_auto_mode != POSITION_AUTO_NONE:
         raise ValueError("crawl cannot start during automatic takeoff/landing")
-    if flight_state_machine.state is FlightState.ADHERED:
-        flight_state_machine.transition_to(FlightState.ON_GROUND)
     last_time_crawl = float(d.time)
     crawl_stage = 0
     crawl_stop_requested = False
@@ -437,8 +456,6 @@ def control_crawl(m, d):
             flight_state_machine.transition_to(FlightState.ON_GROUND)
             if crawl_step_limit is not None:
                 _set_sucker_attachment(m, d, (crawl_end_attached,) * 4)
-                if crawl_end_attached:
-                    flight_state_machine.transition_to(FlightState.ADHERED)
             position_target = d.qpos[:3].copy()
             yaw_command = _current_yaw(d)
             crawl_stage = 0
@@ -473,6 +490,7 @@ def poll_control_authority(d):
     """Axis4 is the sole authorization source; never read other axes in agent mode."""
     global position_auto_mode, position_target, yaw_command, land_still_time
     global planner_target_provider, crawl_stop_requested, crawl_axis_positive, crawl_end_attached
+    global perch_active, perch_motor_idle
     joystick.update()
     value = joystick.axis(AXIS_AGENT_ENABLE)
     enabled = value > 0.5
@@ -486,13 +504,15 @@ def poll_control_authority(d):
     if agent_state_machine is not None:
         agent_state_machine.set_enabled(enabled, "Axis4 revoked agent control")
     if changed:
+        if perch_active:
+            _reset_perch_control(d)
         position_auto_mode = POSITION_AUTO_NONE
         land_still_time = 0.0
         planner_target_provider = None
         position_target = d.qpos[:3].copy()
         yaw_command = _current_yaw(d)
         rate_controller.reset()
-        if enabled and was_auto:
+        if was_auto:
             flight_state_machine.transition_to(FlightState.HOVERING)
         if not enabled:
             if flight_state_machine.state is FlightState.CRAWLING:
@@ -518,6 +538,7 @@ def control_callback(m, d):
         dt = m.opt.timestep
     authority_changed = poll_control_authority(d)
     agent_control = flight_state_machine.agent_authorized
+    _apply_sucker_states(m, d)
     omega = gyro_filter.update(d.sensordata[:3].copy(), dt)
     qw, qx, qy, qz = d.sensordata[6:10]
     rotation = geometry.GeoQuaternion(qx, qy, qz, qw).getRotationMatrix()
@@ -532,7 +553,11 @@ def control_callback(m, d):
         control_crawl(m, d)
         last_time = d.time
         return
-    if (flight_state_machine.state in {FlightState.ON_GROUND, FlightState.ADHERED}
+    if perch_motor_idle:
+        d.ctrl[5:9] = 0.0
+        last_time = d.time
+        return
+    if (flight_state_machine.state is FlightState.ON_GROUND
             and position_auto_mode == POSITION_AUTO_NONE):
         # Ground locomotion must not fight a stale airborne position target.
         d.ctrl[5:9] = 0.0
@@ -568,7 +593,10 @@ def control_callback(m, d):
     goal = VehicleState(pos=position_target.copy(), vel=velocity, rotation=np.eye(3), omega=feedforward_omega)
     position_controller.set_current_state(current)
     position_controller.set_goal_state(goal)
-    target_rate = position_controller.control_update(goal_yaw=yaw_command, goal_acc=acceleration)
+    target_rate = position_controller.control_update(
+        goal_yaw=yaw_command, goal_acc=acceleration,
+        preferred_body_y=np.array([-math.sin(yaw_command), math.cos(yaw_command), 0.])
+        if perch_active else None)
     thrust = float(np.clip(target_rate[0], 0.0, 4.0 * mixer.const_thrust * mixer.max_speed ** 2))
     target_omega = np.asarray(target_rate[1:], dtype=float)
     actuation = rate_controller.update(target_thrust=thrust, target_omega=target_omega,
@@ -724,7 +752,9 @@ class MMUAVEnv:
         self._install_provider(provider)
 
     def hold_position(self, position=None, yaw=None):
-        global position_target, yaw_command
+        global position_target, yaw_command, perch_active, perch_motor_idle
+        if perch_active:
+            _reset_perch_control(self.data)
         observed = self.observe()
         position = np.asarray(observed["position"] if position is None else position, dtype=float).copy()
         yaw = observed["yaw"] if yaw is None else float(yaw)
@@ -737,6 +767,101 @@ class MMUAVEnv:
         position_target = position.copy()
         yaw_command = yaw
         self._install_provider(provider if self.agent_control_enabled else None)
+
+    def set_sucker_states(self, states):
+        """Owner-thread command interface, available in every flight/control mode."""
+        self._check_open()
+        _set_sucker_attachment(self.model, self.data, states)
+        return self.flight_state_machine.sucker_states
+
+    def prepare_perch(self):
+        """Enable all cups before planning; leave airborne position hold active."""
+        global perch_active, perch_motor_idle, perch_saved_gains
+        self.require_agent_control()
+        if self.flight_state_machine.state is not FlightState.HOVERING or position_auto_mode != POSITION_AUTO_NONE:
+            raise ValueError("aggressive_perch requires idle HOVERING")
+        perch_saved_gains = (position_controller.kx, position_controller.kv, position_controller.kR)
+        perch_active, perch_motor_idle = True, False
+        self.data.ctrl[0] = 0.0
+        _set_sucker_attachment(self.model, self.data, (True,) * 4)
+
+    def perch_geometry(self):
+        """Nominal underside contact centroid relative to the free-joint origin."""
+        snapshot = mujoco.MjData(self.model)
+        mujoco.mj_fwdPosition(self.model, snapshot)
+        origin = snapshot.body("Body").xpos
+        rotation = snapshot.body("Body").xmat.reshape(3, 3)
+        feet = []
+        for name in SUCKER_GEOMS:
+            gid = self.model.geom(name).id
+            mesh = self.model.geom_dataid[gid]
+            start = self.model.mesh_vertadr[mesh]
+            count = self.model.mesh_vertnum[mesh]
+            vertices = (self.model.mesh_vert[start:start + count]
+                        @ snapshot.geom_xmat[gid].reshape(3, 3).T + snapshot.geom_xpos[gid])
+            local = (vertices - origin) @ rotation
+            bottom = local[local[:, 2] <= local[:, 2].min() + 0.0001]
+            feet.append(bottom.mean(axis=0))
+        return {"foot_offset": np.mean(feet, axis=0),
+                "gravity": self.model.opt.gravity.copy(),
+                "mass": float(self.model.body_subtreemass[self.model.body("Body").id]),
+                "max_thrust": 4 * mixer.const_thrust * mixer.max_speed ** 2}
+
+    def follow_perch_trajectory(self, trajectory, *, gains=(40., 12., 12.)):
+        """Keep terminal acceleration/normal approach, including beyond T."""
+        self.require_agent_control()
+        position_controller.set_parameters(*gains)
+        start_time = float(self.data.time)
+        gravity = self.model.opt.gravity.copy()
+
+        def provider(*, d, current_rotation, **kwargs):
+            state = trajectory.evaluate(min(float(d.time) - start_time, trajectory.total_time))
+            force = state.acceleration - gravity
+            norm = np.linalg.norm(force)
+            b3 = force / max(norm, 1e-9)
+            b3_dot = (state.jerk - b3 * np.dot(b3, state.jerk)) / max(norm, 1e-9)
+            omega_world = np.cross(b3, b3_dot) + np.array([0., 0., state.yaw_rate])
+            return PlannerTarget(state.position.copy(), state.velocity.copy(),
+                                 state.acceleration.copy(), state.yaw, state.yaw_rate,
+                                 current_rotation.T @ omega_world)
+        self._install_provider(provider)
+
+    def perch_contact_status(self, normal, point):
+        """Count distinct cups touching an external surface with matching normal."""
+        cups = {self.model.geom(name).id: name
+                for name, enabled in zip(SUCKER_GEOMS, self.flight_state_machine.sucker_states)
+                if enabled}
+        root = self.model.body_rootid[self.model.body("Body").id]
+        attached = set()
+        for contact in self.data.contact:
+            for cup, other, sign in ((contact.geom1, contact.geom2, -1),
+                                     (contact.geom2, contact.geom1, 1)):
+                if cup not in cups or contact.efc_address < 0 or contact.dist > .003:
+                    continue
+                if self.model.body_rootid[self.model.geom_bodyid[other]] == root:
+                    continue
+                outward = sign * contact.frame[:3]
+                if (np.dot(outward, normal) > math.cos(math.radians(15))
+                        and abs(np.dot(contact.pos - point, normal)) < .03):
+                    attached.add(cups[cup])
+        return {"contact_cups": sorted(attached), "contact_count": len(attached),
+                "body_z": self.data.body("Body").xmat.reshape(3, 3)[:, 2].copy()}
+
+    def idle_perch_motors(self):
+        global perch_motor_idle
+        self.require_agent_control()
+        perch_motor_idle = True
+        self.data.ctrl[5:9] = 0.0
+        rate_controller.reset()
+
+    def complete_perch(self):
+        global perch_active, perch_motor_idle
+        self.require_agent_control()
+        self.flight_state_machine.transition_to(FlightState.ON_GROUND)
+        _reset_perch_control(self.data, release=False)
+        self._install_provider(None)
+        self.data.ctrl[5:9] = 0.0
+        rate_controller.reset()
 
     def start_crawl(self, steps, attached):
         self.require_agent_control()

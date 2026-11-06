@@ -60,7 +60,7 @@ class SE3Controller:
     
     # 控制更新函数(外部调用)
 
-    def control_update(self, goal_yaw, goal_acc: np.ndarray):
+    def control_update(self, goal_yaw, goal_acc: np.ndarray, *, preferred_body_y=None):
 
         e_x, e_v = self.update_linear_error()
         # 位置速度控制(线性控制)
@@ -70,15 +70,25 @@ class SE3Controller:
             thrust_vector = self.vehicle_mass * goal_acc + self.vehicle_mass * self.gravity * np.array([0, 0, 1]) - self.kv * e_v
         thrust = np.dot(thrust_vector, self.current_state.rotation[:,2])
 
-        b_3 = thrust_vector / np.linalg.norm(thrust_vector)
+        norm = np.linalg.norm(thrust_vector)
+        b_3 = thrust_vector / norm if norm > 1e-9 else self.current_state.rotation[:, 2]
 
         b_c = np.asarray([np.cos(goal_yaw), np.sin(goal_yaw), 0])
         if np.linalg.norm(np.cross(b_3, b_c)) < 1e-6:
             b_c = np.asarray([np.cos(goal_yaw) * np.cos(np.pi / 6), np.sin(goal_yaw) * np.cos(np.pi / 6), np.sin(np.pi / 6)])
 
-        b_2 = np.cross(b_3, b_c)
+        if preferred_body_y is None:
+            b_2 = np.cross(b_3, b_c)
+        else:
+            # A pitch-through-90 perching maneuver must not flip body Y when
+            # the thrust axis crosses the horizontal heading direction.
+            b_2 = preferred_body_y - np.dot(preferred_body_y, b_3) * b_3
+            if np.linalg.norm(b_2) < 1e-6:
+                b_2 = np.cross(b_3, b_c)
+        b_2 /= np.linalg.norm(b_2)
         b_1 = np.cross(b_2, b_3)
         R_goal = np.asarray([b_1, b_2, b_3]).T
+        self.command_rotation = R_goal
         R_curr = self.current_state.rotation  # 当前旋转矩阵
         
         e_R = 0.5 * geometry.veemap(R_goal.T @ R_curr - R_curr.T @ R_goal)

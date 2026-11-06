@@ -3,6 +3,7 @@ from .polynomial_optimizer import (
     PiecewisePolynomialTrajectory,
     PolynomialTrajectoryOptimizer,
     TrajectoryState,
+    TerminalThrustConstraint,
 )
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "PolynomialTrajectoryOptimizer",
     "TrajectoryOptimizerConfig",
     "TrajectoryState",
+    "TerminalThrustConstraint",
 ]

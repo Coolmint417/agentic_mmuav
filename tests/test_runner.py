@@ -112,11 +112,12 @@ class RunnerIntegrationTests(unittest.TestCase):
             self.assertTrue(runner.submit("向前爬行，最后脱附"))
             wait_until(lambda: not runner.get_status()["busy"])
             self.assertEqual(len(model.calls), 3)
-            for index, state, steps in ((1, "adhered", 1), (2, "on_ground", 2)):
+            for index, state, steps in ((1, "on_ground", 1), (2, "on_ground", 2)):
                 feedback = json.loads(model.calls[index]["messages"][-1]["content"])
                 self.assertEqual(feedback["tool_result"]["status"], "success")
                 self.assertEqual(feedback["tool_result"]["steps_completed"], steps)
                 self.assertEqual(feedback["observation"]["flight_state"], state)
+                self.assertEqual(feedback["observation"]["sucker_states"], [index == 1] * 4)
             self.assertEqual(runtime.get_status()["agent_state"], "end")
 
     def test_json_repairs_preserve_task_observation_and_image_binding(self):

@@ -31,7 +31,7 @@ class CrawlToolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_decision(json.dumps({k: v for k, v in valid.items() if k != missing}))
 
-    def test_count_state_and_repeated_call_from_adhered(self):
+    def test_count_state_and_repeated_call_with_suction_enabled(self):
         remote = FakeJoystick()
         with control.MMUAVEnv(joystick_reader=remote) as env:
             for steps, attached in ((1, True), (2, False)):
@@ -43,8 +43,9 @@ class CrawlToolTests(unittest.TestCase):
                 self.assertEqual(set(remote.reads), {4})
                 self.assertIs(env.agent_state_machine.state, AgentState.OBSERVATION)
                 self.assertIs(env.flight_state_machine.state,
-                              FlightState.ADHERED if attached else FlightState.ON_GROUND)
+                              FlightState.ON_GROUND)
                 np.testing.assert_array_equal(env.data.ctrl[1:5], float(attached))
+                self.assertEqual(env.flight_state_machine.sucker_states, (attached,) * 4)
                 np.testing.assert_array_equal(env.data.ctrl[5:9], 0.0)
                 self.assertEqual(env.data.ctrl[0], 0.0)
                 self.assertLess(abs(float(env.data.joint("joint_upper_link").qpos[0])), .03)
@@ -83,7 +84,7 @@ class CrawlToolTests(unittest.TestCase):
             deadline = env.data.time + 7
             while env.flight_state_machine.state is FlightState.CRAWLING and env.data.time < deadline:
                 env.step()
-            self.assertIs(env.flight_state_machine.state, FlightState.ADHERED)
+            self.assertIs(env.flight_state_machine.state, FlightState.ON_GROUND)
             np.testing.assert_array_equal(env.data.ctrl[1:5], 1.0)
             np.testing.assert_array_equal(env.data.ctrl[5:9], 0.0)
 
@@ -100,7 +101,7 @@ class CrawlToolTests(unittest.TestCase):
                 env.step()
                 if env.flight_state_machine.state is not FlightState.CRAWLING:
                     break
-            self.assertIs(env.flight_state_machine.state, FlightState.ADHERED)
+            self.assertIs(env.flight_state_machine.state, FlightState.ON_GROUND)
 
 
 if __name__ == "__main__":
