@@ -28,18 +28,18 @@ def main():
         "--thinking", action=argparse.BooleanOptionalAction, default=True
     )
     parser.add_argument(
-        "--reasoning-effort", choices=("low", "high", "max"), default="high"
+        "--reasoning-effort", choices=("low", "high", "max"), default="low"
     )
     parser.add_argument("--api-timeout", type=int, default=180)
     parser.add_argument(
         "--no-preview", action="store_true", help="Disable rendering for diagnosis"
     )
-    parser.add_argument("--max-new-tokens", type=int)
+    parser.add_argument("--max-new-tokens", type=int, default=16384)
     parser.add_argument("--observation-size", type=int, default=224)
     parser.add_argument(
         "--depth",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help="向模型添加第一视角深度图",
     )
     parser.add_argument(
@@ -57,8 +57,6 @@ def main():
     args = parser.parse_args()
     if not 8 <= args.depth_size <= 1024:
         parser.error("depth-size must be in [8, 1024]")
-    if args.max_new_tokens is None:
-        args.max_new_tokens = 4096 if args.backend == "deepseek" else 384
     if args.max_new_tokens < 1 or args.observation_size < 1 or args.api_timeout < 1:
         parser.error(
             "max-new-tokens, observation-size and api-timeout must be positive"
