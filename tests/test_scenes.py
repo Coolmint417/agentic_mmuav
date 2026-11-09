@@ -3,12 +3,38 @@ import unittest
 from unittest.mock import patch
 
 import mujoco
+import numpy as np
 from env.scenes import SCENES, load_scene_model
 from runtime import RuntimeConfig
 from tests.test_runner import ScriptedModel, running_system, wait_until
 
 
 class SceneTests(unittest.TestCase):
+    def test_perch_panels_have_requested_surface_centers_and_normals(self):
+        model = load_scene_model("map6")
+        data = mujoco.MjData(model)
+        mujoco.mj_fwdPosition(model, data)
+        cases = (
+            (45, 0, [3, 2, 2]),
+            (60, np.pi / 2, [-2, 7, 2]),
+            (90, -3 * np.pi / 4, [-6, -2, 2]),
+        )
+        for angle, yaw, center in cases:
+            geom = model.geom(f"map6_surface{angle}")
+            rotation = data.geom_xmat[geom.id].reshape(3, 3)
+            normal = rotation[:, 2]
+            tilt = np.deg2rad(angle)
+            expected = [-np.sin(tilt) * np.cos(yaw),
+                        -np.sin(tilt) * np.sin(yaw), np.cos(tilt)]
+            np.testing.assert_allclose(normal, expected, atol=1e-9)
+            np.testing.assert_allclose(
+                data.geom_xpos[geom.id] + geom.size[2] * normal, center, atol=1e-9)
+            self.assertTrue(geom.contype[0] and geom.conaffinity[0])
+            # Every corner is above the floor, including the rear face.
+            lowest_z = data.geom_xpos[geom.id, 2] - np.dot(
+                np.abs(rotation[2]), geom.size)
+            self.assertGreater(lowest_z, 0.4)
+
     def test_all_maps_compile_with_clear_spawn_and_distinct_layouts(self):
         layouts = set()
         for scene in SCENES:
@@ -25,7 +51,7 @@ class SceneTests(unittest.TestCase):
                              for i in contact.geom]
                     self.assertFalse(any(name and name.startswith("map") for name in names))
                 layouts.add(model.geom_pos.tobytes())
-        self.assertEqual(len(layouts), 5)
+        self.assertEqual(len(layouts), len(SCENES))
 
     def test_reload_renders_every_map_and_invalid_map_preserves_environment(self):
         model = ScriptedModel(['{"final":"旧地图完成"}', '{"final":"新地图完成"}'])

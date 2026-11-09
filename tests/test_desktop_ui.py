@@ -14,6 +14,7 @@ from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
 from runtime.events import EventBus
+from env.scenes import SCENES
 from agent.runner import RunnerConfig
 from ui.main_window import AgentWindow
 
@@ -120,7 +121,7 @@ class DesktopTests(unittest.TestCase):
         window = AgentWindow(runtime, runner, events)
         window.show()
         window._refresh()
-        self.assertEqual(window.scene_selector.count(), 5)
+        self.assertEqual(window.scene_selector.count(), len(SCENES))
         self.assertEqual(window.status_labels["suckers"].text(), "开 / 关 / 开 / 关")
         window.scene_selector.setCurrentIndex(3)
         window.reload_scene_button.click()

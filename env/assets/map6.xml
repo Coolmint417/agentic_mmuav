@@ -1,0 +1,39 @@
+<mujoco model="map6">
+  <!-- 吸附测试：三块 1.6x1.6m、厚 0.16m 的固定平板。
+       body 原点是朝向接近区的表面中心；旋转为 Rz(yaw)*Ry(-wall_angle)。
+       geom 沿局部 -Z 后移半厚度，保证表面中心就是文档中的目标点。
+       每块板背面用直径 0.2m 的竖直柱连接地面，保留碰撞与吸附接触。 -->
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane" friction="1 1 1"/>
+
+    <!-- 北向接近：wall_angle=45deg，机器人目标 pitch=-45deg，yaw=0。 -->
+    <body name="map6_panel45" pos="3 2 2"
+          quat="0.9238795325112867 0 -0.3826834323650898 0">
+      <geom name="map6_surface45" type="box" pos="0 0 -0.08" size="0.8 0.8 0.08"
+            material="map_tiles_mat" friction="1 1 1"/>
+    </body>
+    <geom name="map6_support45" type="cylinder" size="0.1"
+          fromto="3.084852814 2 0 3.084852814 2 1.915147186"
+          material="map_marble_mat" friction="1 1 1"/>
+
+    <!-- 西向接近：wall_angle=60deg，机器人目标 pitch=-60deg，yaw=pi/2。 -->
+    <body name="map6_panel60" pos="-2 7 2"
+          quat="0.6123724356957946 0.3535533905932737 -0.35355339059327373 0.6123724356957945">
+      <geom name="map6_surface60" type="box" pos="0 0 -0.08" size="0.8 0.8 0.08"
+            material="map_planks_mat" friction="1 1 1"/>
+    </body>
+    <geom name="map6_support60" type="cylinder" size="0.1"
+          fromto="-2 7.103923048 0 -2 7.103923048 1.94"
+          material="map_marble_mat" friction="1 1 1"/>
+
+    <!-- 东南向接近：wall_angle=90deg，机器人目标 pitch=-90deg，yaw=-3pi/4。 -->
+    <body name="map6_panel90" pos="-6 -2 2"
+          quat="0.27059805007309856 -0.6532814824381882 -0.2705980500730985 -0.6532814824381883">
+      <geom name="map6_surface90" type="box" pos="0 0 -0.08" size="0.8 0.8 0.08"
+            material="obstacle_wall_brick1" friction="1 1 1"/>
+    </body>
+    <geom name="map6_support90" type="cylinder" size="0.1"
+          fromto="-6.084852814 -2.084852814 0 -6.084852814 -2.084852814 2"
+          material="map_marble_mat" friction="1 1 1"/>
+  </worldbody>
+</mujoco>
