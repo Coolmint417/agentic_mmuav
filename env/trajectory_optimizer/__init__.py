@@ -4,6 +4,7 @@ from .polynomial_optimizer import (
     PolynomialTrajectoryOptimizer,
     TrajectoryState,
     TerminalThrustConstraint,
+    InitialThrustConstraint,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "TrajectoryOptimizerConfig",
     "TrajectoryState",
     "TerminalThrustConstraint",
+    "InitialThrustConstraint",
 ]

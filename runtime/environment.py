@@ -11,7 +11,7 @@ from env.scenes import get_scene, load_scene_model
 from env.mmuav_env import MMUAVEnv, POSITION_AUTO_NONE
 from observations import MuJoCoObservationProvider, ObservationConfig, collect_for_agent
 from observations.process import ProcessObservation
-from tools import AggressivePerchTool, CrawlTool, FlyWaypointTool, LandTool, TakeoffTool
+from tools import AggressivePerchTool, AggressiveTakeoffTool, CrawlTool, FlyWaypointTool, LandTool, TakeoffTool
 from tools.tasks import PlanningRequest
 from .events import EventBus, describe_error
 from .preview import PreviewRenderer, WorldCamera
@@ -172,7 +172,7 @@ class EnvironmentRuntime:
             if self._active is not None:
                 raise RuntimeError("Another tool is running")
             registry = {
-                tool.name: tool for tool in (TakeoffTool, LandTool, FlyWaypointTool, CrawlTool, AggressivePerchTool)
+                tool.name: tool for tool in (TakeoffTool, LandTool, FlyWaypointTool, CrawlTool, AggressivePerchTool, AggressiveTakeoffTool)
             }
             Tool = registry[command["tool"]]
             tool = Tool(self._env, self._env.agent_state_machine)
@@ -347,6 +347,7 @@ class EnvironmentRuntime:
             "agent_state": agent.state.value,
             "flight_state": self._env.flight_state_machine.state.value,
             "sucker_states": list(self._env.flight_state_machine.sucker_states),
+            "nominal_specific_thrust_m_s2": self._env.flight_state_machine.nominal_specific_thrust,
             "control_mode": self._env.flight_state_machine.control_mode.value,
             "sim_time": state["time"],
             "position": state["position"].tolist(),

@@ -32,6 +32,22 @@ class TerminalThrustConstraint:
             raise ValueError("specific thrust bounds must satisfy 0 < lower < upper")
 
 
+@dataclass(frozen=True)
+class InitialThrustConstraint(TerminalThrustConstraint):
+    """Optimize initial f/m along a known body Z, optionally warm-started."""
+    initial_guess: float | None = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.initial_guess is not None and (
+            isinstance(self.initial_guess, bool)
+            or not isinstance(self.initial_guess, (int, float))
+            or not np.isfinite(self.initial_guess)
+            or not self.lower <= self.initial_guess <= self.upper
+        ):
+            raise ValueError("initial thrust guess must be finite and within bounds")
+
+
 @dataclass
 class TrajectoryState:
     t: float
@@ -57,12 +73,14 @@ class PiecewisePolynomialTrajectory:
         segment_durations: np.ndarray,
         config: TrajectoryOptimizerConfig | None = None,
         terminal_specific_thrust: float | None = None,
+        initial_specific_thrust: float | None = None,
     ) -> None:
         self.pos_coeffs = np.asarray(pos_coeffs, dtype=np.float64)
         self.yaw_coeffs = np.asarray(yaw_coeffs, dtype=np.float64)
         self.segment_durations = np.asarray(segment_durations, dtype=np.float64)
         self.config = config or TrajectoryOptimizerConfig()
         self.terminal_specific_thrust = terminal_specific_thrust
+        self.initial_specific_thrust = initial_specific_thrust
         self.knot_times = np.concatenate(
             [np.zeros(1), np.cumsum(self.segment_durations)]
         )
@@ -161,6 +179,7 @@ class PolynomialTrajectoryOptimizer:
         waypoint_times: np.ndarray | None = None,
         jerks: np.ndarray | None = None,
         terminal_thrust: TerminalThrustConstraint | None = None,
+        initial_thrust: InitialThrustConstraint | None = None,
         z_bounds: tuple[float | None, float | None] | None = None,
     ) -> PiecewisePolynomialTrajectory:
         positions = _as_2d(positions, width=3, name="positions")
@@ -222,6 +241,11 @@ class PolynomialTrajectoryOptimizer:
                 raise TypeError("terminal_thrust must be TerminalThrustConstraint")
             if acceleration_mask[-1]:
                 raise ValueError("terminal thrust cannot also fix terminal acceleration")
+        if initial_thrust is not None:
+            if not isinstance(initial_thrust, InitialThrustConstraint):
+                raise TypeError("initial_thrust must be InitialThrustConstraint")
+            if acceleration_mask[0]:
+                raise ValueError("initial thrust cannot also fix initial acceleration")
         opti = ca.Opti()
         pos_vars = [
             opti.variable(segment_durations.shape[0], self.config.k_pos + 1)
@@ -275,6 +299,17 @@ class PolynomialTrajectoryOptimizer:
                 opti.subject_to(
                     _poly_ca(pos_vars[axis], last, float(segment_durations[-1]), 2)
                     == terminal_thrust.gravity[axis] + specific_thrust * terminal_thrust.normal[axis])
+        initial_specific_thrust = None
+        if initial_thrust is not None:
+            initial_specific_thrust = opti.variable()
+            opti.subject_to(opti.bounded(initial_thrust.lower, initial_specific_thrust, initial_thrust.upper))
+            opti.set_initial(initial_specific_thrust, initial_thrust.initial_guess
+                             if initial_thrust.initial_guess is not None
+                             else (initial_thrust.lower + initial_thrust.upper) / 2)
+            for axis in range(3):
+                opti.subject_to(_poly_ca(pos_vars[axis], 0, 0., 2)
+                                == initial_thrust.gravity[axis]
+                                + initial_specific_thrust * initial_thrust.normal[axis])
         if z_bounds is not None:
             for segment, duration in enumerate(segment_durations):
                 for time in np.linspace(0., float(duration), 101):
@@ -318,6 +353,8 @@ class PolynomialTrajectoryOptimizer:
                 config=self.config,
                 terminal_specific_thrust=(float(solution.value(specific_thrust))
                                           if specific_thrust is not None else None),
+                initial_specific_thrust=(float(solution.value(initial_specific_thrust))
+                                         if initial_specific_thrust is not None else None),
             )
 
             if z_bounds is None:

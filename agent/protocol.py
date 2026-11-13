@@ -21,7 +21,7 @@ def parse_decision(text):
     if set(decision) == {"final"}:
         if not isinstance(decision["final"], str) or not decision["final"].strip():
             raise ValueError("final must be a nonempty string")
-    elif decision.get("tool") in {"takeoff", "land"} and set(decision) == {"tool"}:
+    elif decision.get("tool") in {"takeoff", "land", "aggressive_takeoff"} and set(decision) == {"tool"}:
         pass
     elif decision.get("tool") == "fly_waypoint":
         parse_fly_waypoint(decision)
@@ -31,7 +31,7 @@ def parse_decision(text):
         parse_aggressive_perch(decision)
     else:
         raise ValueError(
-            "Use takeoff, land, fly_waypoint, crawl, aggressive_perch or {final: answer}; no extra fields"
+            "Use takeoff, aggressive_takeoff, land, fly_waypoint, crawl, aggressive_perch or {final: answer}; no extra fields"
         )
     return decision
 
@@ -41,18 +41,20 @@ Return exactly ONE JSON object per response. No Markdown, explanations outside J
 
 DECISIONS
 {"tool":"takeoff"} -- no arguments; only on_ground.
+{"tool":"aggressive_takeoff"} -- no arguments; only idle on_ground on a 15..90 degree inclined surface, after a successful perch has recorded nominal_specific_thrust_m_s2. Use this instead of ordinary takeoff to detach from a slope or wall. The tool plans a 2-second trajectory along the INITIAL body +Z direction by h=1+sqrt((abs(pitch_deg)-15)/75) meters, with zero initial/final velocity and zero final acceleration. Initial acceleration and thrust magnitude are optimized with the initial thrust direction aligned to body +Z; the previous perch's nominal specific thrust is an optimization initial guess, not a fixed launch thrust. Cups stay enabled during planning and are released only after a valid plan; successful execution ends in stable hovering. Ensure space for the whole robot along this outward takeoff path; this tool does not perform collision avoidance.
 {"tool":"land"} -- no arguments; only hovering.
 {"tool":"fly_waypoint","waypoint":[{"time":3.0,"position":[-1.4,2.0,1.0],"yaw":0.0}]} -- only hovering; one or more waypoints.
 {"tool":"crawl","steps":2,"attached":true} -- only on_ground; steps is a positive integer chosen by you; attached is a required JSON boolean.
 {"tool":"aggressive_perch","position":[2.0,0.0,1.5],"yaw":0.0,"wall_angle_deg":90.0,"time":2.0} -- only idle hovering; exactly one surface contact point in absolute NWU meters, yaw in radians, wall inclination 30..90 degrees from horizontal, duration in simulation seconds.
 Perching uses body pitch=-wall_angle_deg and heading yaw. The outward surface normal is [-sin(angle)*cos(yaw), -sin(angle)*sin(yaw), cos(angle)] and the robot must begin on that side. At yaw=0 a vertical wall is approached from smaller X. Position denotes the center of the four-cup contact patch on the surface, NOT the body origin; the tool compensates the cup offset. Four-cup adhesion is enabled before minimum-snap planning. Success requires real stable surface contact with motors off and enters on_ground with sucker_states=[true,true,true,true]; a timeout is not successful adhesion. The tool is not a collision-avoidance planner. Do not invent surface angles or contact points unsupported by observations.
+Perch success is confirmed by four enabled cups in real external contact with angular speed <=0.5 rad/s continuously for 0.5 simulation seconds after motor shutdown. A contact loss or excessive angular speed restarts this timer. Exact target-position/plane distance, alignment to the estimated plane, and linear speed are not success gates; position/alignment errors remain diagnostics.
 Before calling aggressive_perch, hover at least 2.0 meters from the target plane on its outward-normal side: d = dot(current position_m - target position, n) must be >= 2.0 m. This is perpendicular clearance, not Euclidean distance to a point. Perching is a FAST maneuver: choose 0 < time <= 2.0 seconds and average normal approach speed d/time >= 1.0 m/s (2 m clearance means at most 2 seconds to the contact point). For roughly 2 m clearance, prefer about 1.5--1.8 seconds when feasible; 2 seconds is an upper bound, not the default target. Do not make time longer to be conservative; long single-segment trajectories can retreat and dip toward the floor. The >=1 m/s requirement refers to average approach speed, NOT terminal impact speed: the tool still uses a gentle 0.4 m/s normal contact velocity. The optimizer chooses terminal specific thrust within bounds while preserving the requested wall-aligned attitude. If clearance is insufficient, first use fly_waypoint to reach an observed free hovering approach position and inspect the new observation. Do not guess unknown wall geometry. Distance/time guidelines do not guarantee feasibility; use tool errors and updated observations to replan.
 One crawl step is one complete four-stage forward gait cycle (about 3.2 simulation seconds), not a fixed distance. Motion follows the robot's current body-forward direction; crawl cannot steer or reverse.
 After the requested steps, the legs return to neutral. attached=true keeps all cups attached and enters on_ground with sucker_states=[true,true,true,true]; attached=false releases adhesion, retains surface collision and enters on_ground.
-Suction is an independent command vector, not a flight state. ON_GROUND includes rest supported by a slope or wall after perching. Takeoff is allowed on_ground and explicitly releases all cups before lifting off. Do not claim an exact distance from step count; compare observations.
+Suction is an independent command vector, not a flight state. ON_GROUND includes rest supported by a slope or wall after perching. Ordinary takeoff is for level support; use aggressive_takeoff after perching on a 15..90 degree slope/wall, when nominal_specific_thrust_m_s2 is available. Both takeoff tools release all cups before lifting off. Do not claim an exact distance from step count; compare observations.
 {"final":"中文回复或用户所用语言的回复"} -- final MUST be a string, never an object such as {"message":...}.
 observation.sucker_states is a four-boolean adhesion-enable vector, ordered front-left, rear-left, rear-right, front-right (see sucker_order). It records commands, NOT confirmed contact; enabled cups in flight do not imply successful attachment. Changing suction does not itself change the motion state.
-If a flight task starts on_ground, take off first and use the resulting observation to plan horizontal flight.
+If a flight task starts on_ground, take off first (takeoff for level support, aggressive_takeoff for a perched slope/wall with recorded nominal thrust) and use the resulting observation to plan horizontal flight.
 
 COORDINATES AND DIRECTIONS
 Every waypoint position is an ABSOLUTE WORLD [x,y,z] in meters, never a displacement.

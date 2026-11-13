@@ -1,5 +1,6 @@
 """Flight states and control authority shared by manual input and agent tools."""
 from enum import Enum
+import math
 
 
 class FlightState(str, Enum):
@@ -53,7 +54,21 @@ class FlightStateMachine:
             raise InvalidFlightTransition("FLY_AGENT requires agent authority")
         self._control_mode = control_mode
         self._state = initial_state
+        self._nominal_specific_thrust = None
         self.set_sucker_states(sucker_states)
+
+    @property
+    def nominal_specific_thrust(self):
+        """Last successful perch's optimized f/m in m/s²; None after reset."""
+        return self._nominal_specific_thrust
+
+    def set_nominal_specific_thrust(self, value):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value) or value <= 0
+        ):
+            raise ValueError("nominal_specific_thrust must be positive finite m/s² or None")
+        self._nominal_specific_thrust = None if value is None else float(value)
 
     @property
     def sucker_states(self) -> tuple[bool, bool, bool, bool]:

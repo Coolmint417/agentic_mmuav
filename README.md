@@ -4,6 +4,10 @@
 工具复用环境自动起降逻辑，并在完成后同步 agent 与无人机状态机。
 调用方法及完成判据见 [tools/README.md](tools/README.md)。
 
+斜面/墙面脱附起飞使用无参数 `{"tool":"aggressive_takeoff"}`：仅 ON_GROUND、绝对 pitch 为 15～90° 且已有成功吸附的名义比推力记录时允许调用。
+规划 2 s minimum-snap 轨迹，沿起飞初始机体 +Z 位移 `h=1+sqrt((abs(pitch_deg)-15)/75)` 米；
+起终点速度和终点加速度为零，起始比推力与初始加速度联合优化。规划成功后释放四吸盘，稳定悬停后返回。
+
 基于现有 MuJoCo 无人机环境，逐步搭建本地 VLM 驱动的具身 agent。
 当前提供本地 Ministral 3B 和 DeepSeek API 推理、起降与航点工具、agent 与无人机状态机。
 已实现独立 Environment Runtime、模型 Agent Runner 和 PySide6 桌面界面。

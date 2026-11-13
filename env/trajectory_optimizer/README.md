@@ -1,5 +1,13 @@
 # Trajectory Optimizer
 
+Inclined takeoff also accepts `initial_thrust=InitialThrustConstraint(normal,
+gravity, lower=8., upper=20., initial_guess=nominal)` with an unconstrained
+(NaN) first acceleration row. The optimizer jointly solves initial alpha and
+polynomial coefficients with `a(0)=gravity+alpha*normal`. The recorded nominal
+value is only the initial guess; `trajectory.initial_specific_thrust` reports
+the optimized result. Initial/final velocity and final acceleration can still
+be fixed to zero. Ordinary waypoint/perching calls retain their existing behavior.
+
 This module post-processes model waypoint outputs into a smooth piecewise
 polynomial trajectory.
 

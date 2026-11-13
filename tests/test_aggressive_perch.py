@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 import mujoco
@@ -60,6 +61,63 @@ def executing_tool(env):
 
 
 class AggressivePerchTests(unittest.TestCase):
+    def test_map6_estimated_plane_offset_no_longer_rejects_real_adhesion(self):
+        with control.MMUAVEnv(joystick_reader=FakeJoystick(), scene_id="map6") as env:
+            env.flight_state_machine.transition_to(FlightState.HOVERING)
+            env.data.qpos[:3] = [1.05, 2., 3.]
+            mujoco.mj_forward(env.model, env.data)
+            env.hold_position([1.05, 2., 3.], 0.)
+            for _ in range(500):
+                env.step()
+            call = {"tool": "aggressive_perch", "position": [2.95, 2., 2.],
+                    "yaw": 0., "wall_angle_deg": 45., "time": 1.8}
+            result = executing_tool(env).execute(call)
+            self.assertEqual(result["status"], "success", result)
+            self.assertGreaterEqual(result["stable_seconds"], .5)
+            self.assertEqual(len(result["contact_cups"]), 4)
+            self.assertEqual(env.flight_state_machine.sucker_states, (True,) * 4)
+            np.testing.assert_array_equal(env.data.ctrl[5:9], 0.)
+            for _ in range(500):
+                env.step()
+            self.assertEqual(env.perch_contact_status()["contact_count"], 4)
+
+    def test_stability_timer_restarts_after_contact_loss_or_angular_motion(self):
+        for interrupt in ("contact", "angular"):
+            with self.subTest(interrupt=interrupt), control.MMUAVEnv(joystick_reader=FakeJoystick()) as env:
+                surface_fixture(env, 60.)
+                latched = []
+                idle = env.idle_perch_motors
+                observe = env.observe
+                contacts = env.perch_contact_status
+
+                def latch():
+                    latched.append(env.data.time)
+                    idle()
+
+                def disturbed():
+                    return latched and .20 <= env.data.time - latched[0] < .30
+
+                def sample():
+                    value = observe()
+                    if interrupt == "angular" and disturbed():
+                        value["angular_velocity"] = np.array([1., 0., 0.])
+                    return value
+
+                def contact_sample(*args):
+                    value = contacts(*args)
+                    if interrupt == "contact" and disturbed():
+                        value["contact_count"] = 3
+                        value["contact_cups"] = value["contact_cups"][:3]
+                    return value
+
+                with patch.object(env, "idle_perch_motors", latch), \
+                     patch.object(env, "observe", sample), \
+                     patch.object(env, "perch_contact_status", contact_sample):
+                    result = executing_tool(env).execute(command(60.))
+                self.assertEqual(result["status"], "success", result)
+                self.assertGreaterEqual(result["stable_seconds"], .5)
+                self.assertGreaterEqual(env.data.time - latched[0], .80 - 1e-6)
+
     def test_logged_low_altitude_approaches_perch_without_touching_floor(self):
         for start_x in (-1.7, -2.4):
             with self.subTest(start_x=start_x), control.MMUAVEnv(joystick_reader=FakeJoystick()) as env:

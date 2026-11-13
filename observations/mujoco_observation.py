@@ -125,6 +125,7 @@ class MuJoCoObservationProvider(ObservationProvider):
             "attitude": _attitude(data.qpos[3:7]),
             "flight_state": self.environment.flight_state_machine.state.value,
             "sucker_states": list(self.environment.flight_state_machine.sucker_states),
+            "nominal_specific_thrust_m_s2": self.environment.flight_state_machine.nominal_specific_thrust,
             "sucker_order": list(SUCKER_NAMES),
             "rgb": {"camera": self.config.camera_name},
         }

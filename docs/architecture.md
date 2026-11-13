@@ -28,7 +28,7 @@ flowchart TB
         RT["命令队列 / Future<br/>持续推进仿真与工具任务<br/>检查授权和 turn_id"]
         AS["AgentStateMachine<br/>对话轮次状态<br/>THINK / EXECUTE / OBSERVATION / END"]
         FS["FlightStateMachine<br/>控制权：MANUAL / AGENT<br/>ON_GROUND / HOVERING / FLY_AGENT / CRAWLING<br/>独立 sucker_states：左前/左后/右后/右前"]
-        TOOLS["本地工具注册表<br/>takeoff / land / fly_waypoint / crawl / aggressive_perch<br/>iter_execute 协作执行"]
+        TOOLS["本地工具注册表<br/>takeoff / aggressive_takeoff / land<br/>fly_waypoint / crawl / aggressive_perch<br/>iter_execute 协作执行"]
         OBS["可替换 ObservationProvider<br/>位置 / 姿态 / 飞行状态 / 仿真时间<br/>第一视角 RGB · 可选深度 · 扩展传感器"]
         ENV["MuJoCo / MMUAVEnv<br/>自动起降 · 位置目标 provider<br/>SE3 控制回路 · env.step()"]
         PREVIEW["独立预览渲染器<br/>缓存最新图像与状态快照"]
@@ -145,6 +145,7 @@ flowchart TB
 | --- | --- | --- |
 | 接收任务并采集初始观测 | END → THINK | 保持当前状态 |
 | 选择 takeoff | THINK → EXECUTE | 执行时 ON_GROUND，完成后 HOVERING |
+| 选择 aggressive_takeoff | THINK → EXECUTE → OBSERVATION | 规划期间 ON_GROUND；规划成功后经过 HOVERING 进入 FLY_AGENT，释放吸盘，完成后 HOVERING |
 | 选择 fly_waypoint | THINK → EXECUTE | 规划时 HOVERING，飞行时 FLY_AGENT |
 | 选择 aggressive_perch 并确认稳定四吸盘接触 | THINK → EXECUTE → OBSERVATION | HOVERING → FLY_AGENT → ON_GROUND，sucker_states 全 true、停桨 |
 | 航点完成并稳定悬停 | EXECUTE → OBSERVATION | FLY_AGENT → HOVERING |
@@ -219,6 +220,7 @@ flowchart LR
 
 ```json
 {"tool":"takeoff"}
+{"tool":"aggressive_takeoff"}
 ```
 
 ```json
@@ -235,6 +237,13 @@ flowchart LR
 
 `aggressive_perch` 的 position 是表面接触区域中心，工具按吸盘偏移生成机体目标，约束末端
 `a=alpha*n+gravity`（alpha 默认在 8～20 m/s² 内优化）、`v=-0.4n`，仅从悬停调用，实际稳定接触后进入 ON_GROUND，独立 sucker_states 保持全 true。执行时间最多 2 s、平均法向速度至少 1 m/s，参考轨迹 Z≥0.25 m 并检查全曲线极值。详细法线约定和失败行为见 [工具说明](../tools/README.md#大角度自主吸附-aggressive_perch)。
+
+成功吸附还将优化得到的 f/m 存入 FlightStateMachine.nominal_specific_thrust（m/s²），
+观测回传 nominal_specific_thrust_m_s2；重载环境后为 null。无参数 aggressive_takeoff 仅在
+ON_GROUND、绝对 pitch 15～90°且已有该记录时可用，沿初始机体 +Z 位移
+`h=1+sqrt((abs(pitch_deg)-15)/75)` 米，轨迹时间 2 s。起终点速度与终点加速度为零，
+初始加速度满足 `a(0)=gravity+alpha*n_initial`，alpha 和轨迹系数联合优化，
+nominal thrust 只作优化初值。规划成功才释放吸盘并执行，稳定悬停后完成工具。
 
 ```json
 {"final":"已完成任务。"}

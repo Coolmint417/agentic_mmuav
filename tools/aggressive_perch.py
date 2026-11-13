@@ -24,10 +24,8 @@ class AggressivePerchConfig:
     velocity_gain: float = 12.0
     attitude_gain: float = 12.0
     contact_timeout: float = 1.0
-    attach_seconds: float = 0.3
-    position_tolerance: float = 0.15
-    alignment_tolerance: float = math.radians(15)
-    velocity_tolerance: float = 0.15
+    attach_seconds: float = 0.5
+    alignment_tolerance: float = math.radians(15)  # early motor idle only, not success
     angular_velocity_tolerance: float = 0.5
 
     def __post_init__(self):
@@ -172,24 +170,27 @@ class AggressivePerchTool:
                     raise RuntimeError("simulation time did not advance")
                 previous = now
                 elapsed = now - start
-                contact = self.environment.perch_contact_status(normal, point)
+                contact = self.environment.perch_contact_status()
                 alignment = math.acos(float(np.clip(np.dot(contact["body_z"], normal), -1, 1)))
                 error = float(np.linalg.norm(observed["position"] - goal))
-                aligned_contact = (contact["contact_count"] >= 2
-                                   and alignment <= self.config.alignment_tolerance
-                                   and error <= self.config.position_tolerance)
-                if aligned_contact and not latched:
+                four_cup_contact = contact["contact_count"] == 4
+                angular_speed = float(np.linalg.norm(observed["angular_velocity"]))
+                # Preserve the early two-cup motor shutdown that lets the
+                # remaining feet settle onto the surface. No position gate.
+                if not latched and (four_cup_contact or (
+                        contact["contact_count"] >= 2
+                        and alignment <= self.config.alignment_tolerance)):
                     self.environment.idle_perch_motors()
                     latched = True
-                stable = (latched and aligned_contact and contact["contact_count"] == 4
-                          and np.linalg.norm(observed["velocity"]) <= self.config.velocity_tolerance
-                          and np.linalg.norm(observed["angular_velocity"]) <= self.config.angular_velocity_tolerance)
+                stable = (latched and four_cup_contact
+                          and angular_speed <= self.config.angular_velocity_tolerance)
                 if not stable:
                     stable_since = None
                 elif stable_since is None:
                     stable_since = now
                 if stable_since is not None and now - stable_since >= self.config.attach_seconds:
                     self.environment.complete_perch()
+                    self.flight.set_nominal_specific_thrust(optimized_specific_thrust)
                     completed = True
                     result = {"tool": self.name, "status": "success", "flight_state": self.flight.state.value,
                               "sucker_states": list(self.flight.sucker_states),
@@ -198,12 +199,19 @@ class AggressivePerchTool:
                               "terminal_velocity": terminal_velocity.tolist(),
                               "terminal_acceleration": terminal_acceleration.tolist(),
                               "specific_thrust": optimized_specific_thrust,
+                              "stable_seconds": now - stable_since,
+                              "angular_speed_rad_s": angular_speed,
                               "elapsed_seconds": elapsed, "alignment_error_rad": alignment,
                               "contact_cups": contact["contact_cups"], "position_error": error}
                     return result
-                if elapsed >= duration + self.config.contact_timeout:
+                # Reserve the full confirmation interval in addition to the
+                # approach/contact wait; increasing attach_seconds must not
+                # consume the time available for the cups to settle.
+                if elapsed >= duration + self.config.contact_timeout + self.config.attach_seconds:
                     result = {"tool": self.name, "status": "timeout", "elapsed_seconds": elapsed,
                               "contact_count": contact["contact_count"], "alignment_error_rad": alignment,
+                              "stable_seconds": 0. if stable_since is None else now - stable_since,
+                              "angular_speed_rad_s": angular_speed,
                               "position_error": error, "error": "No stable four-cup adhesion confirmed"}
                     return result
         except Exception as exc:

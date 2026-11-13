@@ -16,6 +16,7 @@
 | `attitude.quaternion_wxyz` | 机体到世界坐标的单位四元数，顺序 w/x/y/z |
 | `attitude.euler_rpy_rad` | `[roll,pitch,yaw]`，单位弧度，旋转矩阵约定为 `Rz(yaw) Ry(pitch) Rx(roll)` |
 | `flight_state` | 共享飞行状态机的实际值：通常为 `on_ground` 或 `hovering`；运动中采集会如实返回 `fly_agent` |
+| `nominal_specific_thrust_m_s2` | 最近一次成功吸附的优化比推力 f/m（m/s²）；未成功吸附或场景重置后为 null，供斜面起飞优化作为初值 |
 | `rgb` | 第一视角 `fpv_camera` 的 RGB 图像及其元数据，默认 224×224 |
 | `depth` | 可选的同一快照第一视角深度图、距离编码及 3×3 区域最小深度；默认 56×56 |
 | `extras` | 配置扩展传感器时才出现的附加 JSON 数据 |

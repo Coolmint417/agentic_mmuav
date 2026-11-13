@@ -171,6 +171,7 @@ model_stop_callback = None
 perch_active = False
 perch_motor_idle = False
 perch_saved_gains = None
+takeoff_saved_gains = None
 
 
 xml_path = os.path.join(os.path.dirname(__file__), './scene.xml')
@@ -201,6 +202,7 @@ def load_callback(m=None, d=None, *, flight_machine=None, agent_machine=None,
     global crawl_stop_requested, crawl_finishing, crawl_neutral_start
     global crawl_step_limit, crawl_steps_completed, crawl_end_attached
     global sucker_contact_defaults, perch_active, perch_motor_idle, perch_saved_gains
+    global takeoff_saved_gains
     mujoco.set_mjcb_control(None)
     m = scene_model if scene_model is not None else mujoco.MjModel.from_xml_path(xml_path)
     d = mujoco.MjData(m)
@@ -215,6 +217,7 @@ def load_callback(m=None, d=None, *, flight_machine=None, agent_machine=None,
     planner_target_provider = None
     perch_active = perch_motor_idle = False
     perch_saved_gains = None
+    takeoff_saved_gains = None
     last_time = 0.0
     yaw_command = 0.0
     takeoff_land_axis_last_sign = 0
@@ -391,6 +394,13 @@ def _reset_perch_control(d, *, release=True):
         _set_sucker_attachment(d.model, d, (False,) * 4)
 
 
+def _reset_takeoff_control():
+    global takeoff_saved_gains
+    if takeoff_saved_gains is not None:
+        position_controller.set_parameters(*takeoff_saved_gains)
+        takeoff_saved_gains = None
+
+
 def _start_crawl(d, *, steps=None, attached=True):
     global last_time_crawl, crawl_stage, crawl_stop_requested, crawl_finishing
     global crawl_step_limit, crawl_steps_completed, crawl_end_attached
@@ -506,6 +516,7 @@ def poll_control_authority(d):
     if changed:
         if perch_active:
             _reset_perch_control(d)
+        _reset_takeoff_control()
         position_auto_mode = POSITION_AUTO_NONE
         land_still_time = 0.0
         planner_target_provider = None
@@ -596,7 +607,7 @@ def control_callback(m, d):
     target_rate = position_controller.control_update(
         goal_yaw=yaw_command, goal_acc=acceleration,
         preferred_body_y=np.array([-math.sin(yaw_command), math.cos(yaw_command), 0.])
-        if perch_active else None)
+        if perch_active or takeoff_saved_gains is not None else None)
     thrust = float(np.clip(target_rate[0], 0.0, 4.0 * mixer.const_thrust * mixer.max_speed ** 2))
     target_omega = np.asarray(target_rate[1:], dtype=float)
     actuation = rate_controller.update(target_thrust=thrust, target_omega=target_omega,
@@ -755,6 +766,7 @@ class MMUAVEnv:
         global position_target, yaw_command, perch_active, perch_motor_idle
         if perch_active:
             _reset_perch_control(self.data)
+        _reset_takeoff_control()
         observed = self.observe()
         position = np.asarray(observed["position"] if position is None else position, dtype=float).copy()
         yaw = observed["yaw"] if yaw is None else float(yaw)
@@ -826,24 +838,47 @@ class MMUAVEnv:
                                  current_rotation.T @ omega_world)
         self._install_provider(provider)
 
-    def perch_contact_status(self, normal, point):
-        """Count distinct cups touching an external surface with matching normal."""
+    def takeoff_geometry(self):
+        """Read the free-joint attitude without stale mj_step transform caches."""
+        self._check_open()
+        rotation = np.empty(9)
+        mujoco.mju_quat2Mat(rotation, self.data.qpos[3:7])
+        return rotation.reshape(3, 3)
+
+    def follow_aggressive_takeoff(self, trajectory, *, gains=(40., 12., 12.)):
+        """Track planned acceleration/jerk and release cups after installing it."""
+        global takeoff_saved_gains
+        self.require_agent_control()
+        if self.flight_state_machine.state is not FlightState.ON_GROUND or position_auto_mode != POSITION_AUTO_NONE:
+            raise ValueError("aggressive_takeoff requires idle ON_GROUND")
+        takeoff_saved_gains = (position_controller.kx, position_controller.kv, position_controller.kR)
+        self.follow_perch_trajectory(trajectory, gains=gains)
+        self.data.ctrl[0] = 0.
+        rate_controller.reset()
+        # Preserve the FSM's ground -> hover -> agent-flight transition graph.
+        self.flight_state_machine.transition_to(FlightState.HOVERING)
+        self.flight_state_machine.transition_to(FlightState.FLY_AGENT)
+        self.set_sucker_states((False,) * 4)
+
+    def perch_contact_status(self, normal=None, point=None):
+        """Count real external contacts; target geometry does not gate contact.
+
+        normal/point are accepted for compatibility with diagnostic callers.
+        Neither the estimated plane nor target position filters real contacts.
+        """
         cups = {self.model.geom(name).id: name
                 for name, enabled in zip(SUCKER_GEOMS, self.flight_state_machine.sucker_states)
                 if enabled}
         root = self.model.body_rootid[self.model.body("Body").id]
         attached = set()
         for contact in self.data.contact:
-            for cup, other, sign in ((contact.geom1, contact.geom2, -1),
-                                     (contact.geom2, contact.geom1, 1)):
+            for cup, other in ((contact.geom1, contact.geom2),
+                               (contact.geom2, contact.geom1)):
                 if cup not in cups or contact.efc_address < 0 or contact.dist > .003:
                     continue
                 if self.model.body_rootid[self.model.geom_bodyid[other]] == root:
                     continue
-                outward = sign * contact.frame[:3]
-                if (np.dot(outward, normal) > math.cos(math.radians(15))
-                        and abs(np.dot(contact.pos - point, normal)) < .03):
-                    attached.add(cups[cup])
+                attached.add(cups[cup])
         return {"contact_cups": sorted(attached), "contact_count": len(attached),
                 "body_z": self.data.body("Body").xmat.reshape(3, 3)[:, 2].copy()}
 
