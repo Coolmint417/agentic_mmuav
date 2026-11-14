@@ -14,6 +14,10 @@
 
 中文总体架构、两个状态机及模型通信格式见 [工程架构图](docs/architecture.md)。
 
+模型可调用 `{"tool":"detect_planes"}` 只读观测平面：本地使用默认640×480同步RGB-D，
+返回世界坐标几何和真实 annotated_rgb 附件。Agent 设置可调整检测尺寸及保存标注图开关（默认开启，artifacts/planes）。
+安装 `python -m pip install -r requirements-planes.txt`；示例与限制见 [平面检测说明](docs/detect_planes.md)。
+
 独立重放界面：`python replay_app.py logs/agent_log_11091541_agperch.jsonl --map map1`。
 从日志读取全部模型输入输出与工具决策，无需加载模型；工具在 MuJoCo 中重新执行，支持工具结束后暂停及继续。
 操作方式与可恢复范围见 [日志重放说明](docs/replay.md)。

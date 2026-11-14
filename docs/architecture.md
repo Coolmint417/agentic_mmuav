@@ -28,7 +28,7 @@ flowchart TB
         RT["命令队列 / Future<br/>持续推进仿真与工具任务<br/>检查授权和 turn_id"]
         AS["AgentStateMachine<br/>对话轮次状态<br/>THINK / EXECUTE / OBSERVATION / END"]
         FS["FlightStateMachine<br/>控制权：MANUAL / AGENT<br/>ON_GROUND / HOVERING / FLY_AGENT / CRAWLING<br/>独立 sucker_states：左前/左后/右后/右前"]
-        TOOLS["本地工具注册表<br/>takeoff / aggressive_takeoff / land<br/>fly_waypoint / crawl / aggressive_perch<br/>iter_execute 协作执行"]
+        TOOLS["本地工具注册表<br/>takeoff / aggressive_takeoff / land<br/>fly_waypoint / crawl / aggressive_perch / detect_planes<br/>iter_execute 协作执行"]
         OBS["可替换 ObservationProvider<br/>位置 / 姿态 / 飞行状态 / 仿真时间<br/>第一视角 RGB · 可选深度 · 扩展传感器"]
         ENV["MuJoCo / MMUAVEnv<br/>自动起降 · 位置目标 provider<br/>SE3 控制回路 · env.step()"]
         PREVIEW["独立预览渲染器<br/>缓存最新图像与状态快照"]
@@ -44,7 +44,7 @@ flowchart TB
         ENV --> PREVIEW
     end
 
-    PLAN["轨迹规划 executor · 独立工作线程<br/>多项式轨迹优化 / IPOPT<br/>支持不等时间间隔航点"]
+    PLAN["共用计算 executor · 独立工作线程<br/>多项式轨迹优化 / IPOPT<br/>或只读 RGB-D 平面 RANSAC / PCA / 标注"]
     TOOLS <-->|"规划请求 / 优化后的轨迹"| PLAN
     RC["遥控器输入<br/>Axis4：Agent 授权<br/>Axis7：手动起降"]
     RC --> ENV
@@ -60,6 +60,12 @@ flowchart TB
 ```
 
 Runner 不直接调用 `env.step()`，也不直接修改状态机。桌面运行时，状态机修改、工具任务推进、观测采集及 renderer 生命周期均归环境线程；轨迹优化等待和模型推理期间，仿真仍持续运行。Qt 线程读取缓存并发送请求，不访问实时 `MjData`。工具的同步 `execute()` 仅保留给无 runtime 的独立脚本和测试。
+
+detect_planes 不修改飞行状态机或控制目标。owner 复制 MjData 后采集默认640×480 RGB-D/位姿；
+ComputationRequest 只将不可变 NumPy 快照送到现有 executor。返回的传感数据、RGB、annotated_rgb
+及 tool_result 绑定同一 observation_id/采集时间，通过原观测链路交付，不以计算结束的新图替换。
+默认保存原始分辨率标注图/JSON，可在 Agent 设置关闭；模型图像等比例缩放。该工具无跨帧记忆，
+只缓存最近一次检测的 mask/boundary，详细数据流与限制见 [平面检测](detect_planes.md)。
 
 对应入口：[`app.py`](../app.py)、[`agent/runner.py`](../agent/runner.py)、[`agent/backends.py`](../agent/backends.py)、[`runtime/environment.py`](../runtime/environment.py)、[`ui/main_window.py`](../ui/main_window.py)。llama.cpp 目前尚无后端适配器或界面选项；图中仅标出将来的接入位置，后续需适配统一 `generate` 接口。
 

@@ -109,6 +109,23 @@ MUJOCO_GL=egl OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m unittest discov
 模型必须使用 `true/false`。表面支撑静止时可调用 takeoff，起飞前会通过统一状态接口释放四吸盘。
 
 
+## 只读平面观测 detect_planes
+
+```json
+{"tool":"detect_planes"}
+```
+
+无需参数，在任意已授权飞行状态下采集同一时刻 RGB/米制深度/相机位姿（默认640×480），
+经 Open3D 多平面 RANSAC、PCA、原始像素支持重建和二维凸包，返回 world_nwu 几何 JSON 与
+实际 annotated_rgb 附件。几何后台计算期间仿真继续，返回图像与传感数据均对应原始快照，
+通过 observation_id/时间绑定。工具不改变控制目标、飞行状态和吸盘。
+
+Agent 设置中默认开启保存 annotated RGB 和 JSON 到 artifacts/planes，并可调整检测宽/高；
+关闭保存不影响向模型发送标注图。普通56×56模型深度设置与检测尺寸独立，不发送检测原始深度。
+P1/P2/... 仅在本次 observation_id 内有效，模型应结合用户描述与标注图选择目标。
+无 Connected Components/DBSCAN，凸包可能跨越空洞或合并共面区域，不能作为可吸附区域证明。
+依赖、纯算法配置、离线脚本和返回字段见 [平面检测文档](../docs/detect_planes.md)。
+
 ## 斜面脱附起飞 aggressive_takeoff
 
 ```json

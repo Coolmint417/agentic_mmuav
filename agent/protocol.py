@@ -21,7 +21,7 @@ def parse_decision(text):
     if set(decision) == {"final"}:
         if not isinstance(decision["final"], str) or not decision["final"].strip():
             raise ValueError("final must be a nonempty string")
-    elif decision.get("tool") in {"takeoff", "land", "aggressive_takeoff"} and set(decision) == {"tool"}:
+    elif decision.get("tool") in {"takeoff", "land", "aggressive_takeoff", "detect_planes"} and set(decision) == {"tool"}:
         pass
     elif decision.get("tool") == "fly_waypoint":
         parse_fly_waypoint(decision)
@@ -31,7 +31,7 @@ def parse_decision(text):
         parse_aggressive_perch(decision)
     else:
         raise ValueError(
-            "Use takeoff, aggressive_takeoff, land, fly_waypoint, crawl, aggressive_perch or {final: answer}; no extra fields"
+            "Use takeoff, aggressive_takeoff, land, fly_waypoint, crawl, aggressive_perch, detect_planes or {final: answer}; no extra fields"
         )
     return decision
 
@@ -40,6 +40,7 @@ SYSTEM_PROMPT = """You are a simulated UAV navigation agent. Plan actions, use t
 Return exactly ONE JSON object per response. No Markdown, explanations outside JSON, or extra fields.
 
 DECISIONS
+{"tool":"detect_planes"} -- no arguments; read-only geometric perception, available in any authorized flight state. Captures synchronous RGB-D/camera pose (default local analysis 640x480), detects multiple planes of any inclination, and returns world_nwu geometry plus a real annotated_rgb attachment. It does not move the robot or select an adhesion target. Use plane_id labels in the attached annotated RGB and the user's description to identify the intended surface; do not select purely by size or inclination. IDs P1/P2/... and mask_id are valid only for their observation_id, never track them across observations. Normals are unit vectors oriented toward the camera; offset obeys n dot p + d=0. distance_to_camera_m is perpendicular distance to the infinite plane, not optical-axis depth or distance to the finite patch. bbox_xyxy uses source_image_size pixels; the attachment may be resized while keeping aspect ratio. Extent/area describe only observed support; convex hulls may bridge holes, occlusion and disconnected coplanar objects, and do NOT certify contact/adhesion clearance. No Connected Components or multi-view memory is used. Observation sensors, RGB, annotated_rgb and tool_result share the capture observation_id/time, which can precede the current simulator time because fitting runs asynchronously. Do not treat the image as a fresh post-computation view. This tool does not force raw depth images to be sent to the model.
 {"tool":"takeoff"} -- no arguments; only on_ground.
 {"tool":"aggressive_takeoff"} -- no arguments; only idle on_ground on a 15..90 degree inclined surface, after a successful perch has recorded nominal_specific_thrust_m_s2. Use this instead of ordinary takeoff to detach from a slope or wall. The tool plans a 2-second trajectory along the INITIAL body +Z direction by h=1+sqrt((abs(pitch_deg)-15)/75) meters, with zero initial/final velocity and zero final acceleration. Initial acceleration and thrust magnitude are optimized with the initial thrust direction aligned to body +Z; the previous perch's nominal specific thrust is an optimization initial guess, not a fixed launch thrust. Cups stay enabled during planning and are released only after a valid plan; successful execution ends in stable hovering. Ensure space for the whole robot along this outward takeoff path; this tool does not perform collision avoidance.
 {"tool":"land"} -- no arguments; only hovering.

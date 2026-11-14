@@ -94,7 +94,7 @@ class ObservationCancelled(RuntimeError):
     """The agent lost authority or changed turns before observation delivery."""
 
 
-def collect_for_agent(provider: ObservationProvider, environment) -> ObservationPacket:
+def collect_for_agent(provider: ObservationProvider, environment, *, packet=None) -> ObservationPacket:
     """Collect in OBSERVATION and advance to THINK only for the same active turn.
 
     Call on the simulation owner thread, while stepping is paused. Sensor
@@ -105,7 +105,7 @@ def collect_for_agent(provider: ObservationProvider, environment) -> Observation
     if agent.state is not AgentState.OBSERVATION:
         raise ValueError("Agent must be in OBSERVATION state")
     turn_id = agent.turn_id
-    packet = provider.collect()
+    packet = provider.collect() if packet is None else packet
     environment.poll_control_authority()
     if (
         not environment.agent_control_enabled

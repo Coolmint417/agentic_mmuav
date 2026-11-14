@@ -11,8 +11,8 @@ from env.scenes import get_scene, load_scene_model
 from env.mmuav_env import MMUAVEnv, POSITION_AUTO_NONE
 from observations import MuJoCoObservationProvider, ObservationConfig, collect_for_agent
 from observations.process import ProcessObservation
-from tools import AggressivePerchTool, AggressiveTakeoffTool, CrawlTool, FlyWaypointTool, LandTool, TakeoffTool
-from tools.tasks import PlanningRequest
+from tools import AggressivePerchTool, AggressiveTakeoffTool, CrawlTool, FlyWaypointTool, LandTool, TakeoffTool, DetectPlanesConfig, DetectPlanesTool
+from tools.tasks import PlanningRequest, ComputationRequest
 from .events import EventBus, describe_error
 from .preview import PreviewRenderer, WorldCamera
 
@@ -56,6 +56,9 @@ class EnvironmentRuntime:
         self._cancel_callback = None
         self._active = None
         self._process_pending = None
+        self._plane_pending = None
+        self._plane_cache = None  # Only the latest observation's masks/boundaries.
+        self._plane_config = DetectPlanesConfig()
         self._process_interval = 1.0
         self._thread = None
 
@@ -120,9 +123,12 @@ class EnvironmentRuntime:
         ):
             raise RuntimeError("Agent turn was cancelled or replaced")
 
-    def begin_turn(self, *, include_depth=False, depth_size=56, process_sample_interval=1.0):
+    def begin_turn(self, *, include_depth=False, depth_size=56, process_sample_interval=1.0,
+                   save_annotated_rgb=True, plane_detection_width=640, plane_detection_height=480):
         # Validate before changing any turn state.
         ProcessObservation.validate_interval(process_sample_interval)
+        plane_config = replace(self._plane_config, width=plane_detection_width,
+                               height=plane_detection_height, save_annotated_rgb=save_annotated_rgb)
         def begin():
             self._env.require_agent_control()  # Read Axis4 before any prompt is sent.
             config = replace(
@@ -137,6 +143,8 @@ class EnvironmentRuntime:
             agent = self._env.agent_state_machine
             agent.start_turn()
             self._process_pending = None
+            self._plane_pending = self._plane_cache = None
+            self._plane_config = plane_config
             self._process_interval = process_sample_interval
             return agent.turn_id, self._observer.collect()
 
@@ -156,7 +164,10 @@ class EnvironmentRuntime:
     def collect_observation(self, turn_id):
         def collect():
             self._validate_turn(turn_id)
-            packet = collect_for_agent(self._observer, self._env)
+            plane_pending, self._plane_pending = self._plane_pending, None
+            packet = collect_for_agent(
+                self._observer, self._env,
+                packet=plane_pending[1] if plane_pending is not None and plane_pending[0] == turn_id else None)
             pending, self._process_pending = self._process_pending, None
             if pending is not None and pending[0] == turn_id:
                 packet = pending[1].attach(packet)
@@ -172,16 +183,24 @@ class EnvironmentRuntime:
             if self._active is not None:
                 raise RuntimeError("Another tool is running")
             registry = {
-                tool.name: tool for tool in (TakeoffTool, LandTool, FlyWaypointTool, CrawlTool, AggressivePerchTool, AggressiveTakeoffTool)
+                tool.name: tool for tool in (TakeoffTool, LandTool, FlyWaypointTool, CrawlTool, AggressivePerchTool, AggressiveTakeoffTool, DetectPlanesTool)
             }
             Tool = registry[command["tool"]]
-            tool = Tool(self._env, self._env.agent_state_machine)
+            cancel_event = threading.Event()
+            if Tool is DetectPlanesTool:
+                tool = Tool(self._env, self._env.agent_state_machine,
+                            capture=self._observer.capture_rgbd, deliver=self._deliver_planes,
+                            config=self._plane_config, cancel_event=cancel_event)
+            else:
+                tool = Tool(self._env, self._env.agent_state_machine)
             self._env.agent_state_machine.complete_think(ThinkOutcome.TOOL)
             self._process_pending = None
+            self._plane_pending = None
             self._active = {
                 "turn_id": turn_id,
-                "process": ProcessObservation(command["tool"], self._env.observe()["time"],
-                                              self._process_interval),
+                "process": None if Tool is DetectPlanesTool else ProcessObservation(
+                    command["tool"], self._env.observe()["time"], self._process_interval),
+                "cancel_event": cancel_event,
                 "task": tool.iter_execute(command),
                 "completion": completion,
                 "planning": None,
@@ -189,6 +208,11 @@ class EnvironmentRuntime:
 
         self._invoke(start)
         return completion
+
+    def _deliver_planes(self, turn_id, packet, detection):
+        self._validate_turn(turn_id)
+        self._plane_pending = (turn_id, packet)
+        self._plane_cache = detection
 
     def cancel_turn(self, reason="用户终止任务"):
         # Nonblocking: a busy UI/model thread must never block RC handover.
@@ -223,6 +247,7 @@ class EnvironmentRuntime:
                 self._preview = None
             self._observer.close()
             self._process_pending = None
+            self._plane_pending = self._plane_cache = None
             self._env.reload_scene(scene_id, scene_model=model)
             self._world_camera = WorldCamera(self._env.model, self._env.data)
             self._observer = MuJoCoObservationProvider(self._env, observer_config)
@@ -263,8 +288,10 @@ class EnvironmentRuntime:
 
     def _cancel_task(self, reason):
         self._process_pending = None
+        self._plane_pending = self._plane_cache = None
         active, self._active = self._active, None
         if active is not None:
+            active["cancel_event"].set()
             if active["planning"] is not None:
                 active["planning"].cancel()
             # A require_agent_control() inside the generator may detect the
@@ -301,7 +328,7 @@ class EnvironmentRuntime:
         if active is None:
             return
         try:
-            if (self._env.agent_control_enabled
+            if (active["process"] is not None and self._env.agent_control_enabled
                     and self._env.agent_state_machine.state is AgentState.EXECUTE):
                 active["process"].sample(self._observer, self._env.observe()["time"])
             planning = active["planning"]
@@ -320,12 +347,13 @@ class EnvironmentRuntime:
             if self._active is not active:
                 active["task"].close()
                 return
-            if isinstance(request, PlanningRequest):
+            if isinstance(request, (PlanningRequest, ComputationRequest)):
                 active["planning"] = self._planner.submit(request.compute)
         except StopIteration as done:
             if self._active is active:
-                active["process"].end_time = self._env.observe()["time"]
-                self._process_pending = (active["turn_id"], active["process"])
+                if active["process"] is not None:
+                    active["process"].end_time = self._env.observe()["time"]
+                    self._process_pending = (active["turn_id"], active["process"])
                 self._active = None
             if not active["completion"].done():
                 active["completion"].set_result(done.value)

@@ -1,6 +1,9 @@
 # 无人机 Observation
 
 此目录提供可替换的观测接口、MuJoCo 默认实现和模型输入打包逻辑。
+`camera.py` / `planes.py` 提供只读 RGB-D 快照及单帧平面算法；detect_planes 通过
+capture_rgbd 使用独立640×480采集，返回同一观测的 RGB 和 annotated_rgb（等比例缩放）。
+该感知工具的反馈可早于计算结束时刻，以 observation_id 和 sim_time_seconds 为准。
 观测按需采集，不恢复 clip 录制，不写入视频或数据集。
 
 ## 默认字段

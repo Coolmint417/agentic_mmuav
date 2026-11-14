@@ -12,6 +12,16 @@ class PlanningRequest:
         return self.optimizer.optimize(**self.arguments)
 
 
+@dataclass
+class ComputationRequest:
+    """Pure snapshot processing on the existing runtime executor."""
+    function: Any
+    arguments: dict
+
+    def compute(self):
+        return self.function(**self.arguments)
+
+
 def execute_synchronously(task, environment):
     """Headless compatibility driver. Interactive applications use EnvironmentRuntime."""
     response = None
@@ -23,7 +33,7 @@ def execute_synchronously(task, environment):
             return finished.value
         response = error = None
         try:
-            if isinstance(request, PlanningRequest):
+            if isinstance(request, (PlanningRequest, ComputationRequest)):
                 response = request.compute()
             else:
                 environment.step()

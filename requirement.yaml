@@ -27,3 +27,4 @@ dependencies:
       # Reuse the repository's pinned backend dependencies.
       - -r requirements-ministral.txt
       - -r requirements-deepseek.txt
+      - -r requirements-planes.txt

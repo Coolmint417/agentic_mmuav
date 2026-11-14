@@ -301,12 +301,17 @@ class AgentWindow(QMainWindow):
         form = QFormLayout()
         self.include_depth = QCheckBox("向模型添加第一视角深度信息")
         form.addRow(self.include_depth)
+        self.save_annotated_rgb = QCheckBox("detect_planes 完成后保存标注 RGB 和几何 JSON")
+        self.save_annotated_rgb.setToolTip("默认开启，保存原始检测分辨率图像到 artifacts/planes；关闭后仍向模型发送标注图。")
+        form.addRow(self.save_annotated_rgb)
         self.setting_fields = {}
         for key, title, minimum, maximum, help_text in (
             ("max_decisions", "最大执行轮数", 1, 10000, "每轮任务最多调用模型的次数，包含格式修正及 FINAL。"),
             ("max_new_tokens", "单次生成 token 上限", 1, 32768, "过小可能截断航点 JSON，过大会增加推理开销。"),
             ("max_parse_retries", "JSON 修正重试次数", 0, 100, "连续非法指令允许请求修正的次数，0 表示直接报错。"),
             ("depth_size", "模型深度分辨率（正方形）", 8, 1024, "默认 56×56，独立于模型 RGB 和界面预览分辨率。"),
+            ("plane_detection_width", "平面检测 RGB-D 宽度", 16, 2048, "默认 640；仅用于本地 RGB-D 几何分析，与模型深度图分辨率独立。"),
+            ("plane_detection_height", "平面检测 RGB-D 高度", 16, 2048, "默认 480；RGB、depth 和 mask 使用相同尺寸。"),
             (
                 "history_messages",
                 "历史消息数上限",
@@ -357,6 +362,7 @@ class AgentWindow(QMainWindow):
     def _show_config(self, config):
         self.system_prompt.setPlainText(config.system_prompt)
         self.include_depth.setChecked(config.include_depth)
+        self.save_annotated_rgb.setChecked(config.save_annotated_rgb)
         self.setting_fields["depth_size"].setEnabled(config.include_depth)
         for key, field in self.setting_fields.items():
             field.setValue(getattr(config, key))
@@ -366,6 +372,7 @@ class AgentWindow(QMainWindow):
             config = RunnerConfig(
                 system_prompt=self.system_prompt.toPlainText(),
                 include_depth=self.include_depth.isChecked(),
+                save_annotated_rgb=self.save_annotated_rgb.isChecked(),
                 **{key: field.value() for key, field in self.setting_fields.items()},
             )
             self.runner.configure(config)

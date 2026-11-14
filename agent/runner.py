@@ -22,12 +22,15 @@ class RunnerConfig:
     include_depth: bool = False
     depth_size: int = 56
     process_sample_interval: float = 1.0
+    save_annotated_rgb: bool = True
+    plane_detection_width: int = 640
+    plane_detection_height: int = 480
 
     def __post_init__(self):
         if not isinstance(self.system_prompt, str) or not self.system_prompt.strip():
             raise ValueError("System prompt must be a nonempty string")
         for name, value in vars(self).items():
-            if name in {"system_prompt", "include_depth", "process_sample_interval"}:
+            if name in {"system_prompt", "include_depth", "process_sample_interval", "save_annotated_rgb"}:
                 continue
             if (
                 isinstance(value, bool)
@@ -42,6 +45,10 @@ class RunnerConfig:
             raise ValueError("过程观测采样间隔必须为正有限秒数")
         if not isinstance(self.include_depth, bool) or not 8 <= self.depth_size <= 1024:
             raise ValueError("深度开关必须为布尔值，深度分辨率需在 8～1024 之间。")
+        if type(self.save_annotated_rgb) is not bool:
+            raise ValueError("保存平面标注图开关必须为布尔值")
+        if not all(16 <= v <= 2048 for v in (self.plane_detection_width, self.plane_detection_height)):
+            raise ValueError("平面检测 RGB-D 宽高需在 16～2048 之间")
 
 
 class AgentRunner:
@@ -252,6 +259,9 @@ class AgentRunner:
         (turn_id, packet,) = self.runtime.begin_turn(
             include_depth=self.config.include_depth, depth_size=self.config.depth_size,
             process_sample_interval=self.config.process_sample_interval,
+            save_annotated_rgb=self.config.save_annotated_rgb,
+            plane_detection_width=self.config.plane_detection_width,
+            plane_detection_height=self.config.plane_detection_height,
         )
         history = [dict(item) for item in self._conversation]
         self._append_observation(history, packet, task=text)
