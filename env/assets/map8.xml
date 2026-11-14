@@ -1,0 +1,36 @@
+<mujoco model="map8">
+  <!-- 前后两块近60度吸附板，中间为真实门洞；同map6的板尺寸与支柱。
+       body原点是可吸附正面中心，R=Rz(yaw)*Ry(-inclination)。 -->
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane" friction="1 1 1"/>
+
+    <!-- 前板：58度，yaw=-8度，略偏东；蓝色瓷砖。 -->
+    <body name="map8_panel_front" pos="3 1.6 2"
+          quat="0.8724891774910369 -0.03381860954561297 -0.4836286483778633 -0.06101038663716382">
+      <geom name="map8_surface_front" type="box" pos="0 0 -0.08" size="0.8 0.8 0.08"
+            material="map_tiles_mat" friction="1 1 1"/>
+    </body>
+    <geom name="map8_support_front" type="cylinder" size="0.1"
+          fromto="3.100775394 1.585836942 0 3.100775394 1.585836942 1.936409688"
+          material="map_marble_mat" friction="1 1 1"/>
+
+    <!-- 中间隔墙：x=6.5，厚0.32m，宽6m，高3.4m。
+         真实门洞净宽2m(y=1.2..3.2)，净高3m(z=0..3)。 -->
+    <geom name="map8_gate_left" type="box" pos="6.5 0.2 1.5" size="0.16 1 1.5"
+          material="obstacle_wall_brick2" friction="1 1 1"/>
+    <geom name="map8_gate_right" type="box" pos="6.5 4.2 1.5" size="0.16 1 1.5"
+          material="obstacle_wall_brick2" friction="1 1 1"/>
+    <geom name="map8_gate_top" type="box" pos="6.5 2.2 3.2" size="0.16 3 0.2"
+          material="map_marble_mat" friction="1 1 1"/>
+
+    <!-- 后板：63度，yaw=12度，略偏西；木板。相对前板横向错开1.2m。 -->
+    <body name="map8_panel_back" pos="10 2.8 2"
+          quat="0.8479693123205478 0.05461597202931271 -0.5196362629085078 0.08912516610021275">
+      <geom name="map8_surface_back" type="box" pos="0 0 -0.08" size="0.8 0.8 0.08"
+            material="map_planks_mat" friction="1 1 1"/>
+    </body>
+    <geom name="map8_support_back" type="cylinder" size="0.1"
+          fromto="10.104584307 2.822230081 0 10.104584307 2.822230081 1.945521140"
+          material="map_marble_mat" friction="1 1 1"/>
+  </worldbody>
+</mujoco>

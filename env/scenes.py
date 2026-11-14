@@ -21,6 +21,8 @@ SCENES = (
     Scene("map4", "地图 4 · 双门洞", "scene_map4.xml"),
     Scene("map5", "地图 5 · 平台庭院", "scene_map5.xml"),
     Scene("map6", "地图 6 · 多角度吸附", "scene_map6.xml"),
+    Scene("map7", "地图 7 · 前后斜面吸附", "scene_map7.xml"),
+    Scene("map8", "地图 8 · 门洞错位斜面", "scene_map8.xml"),
 )
 
 

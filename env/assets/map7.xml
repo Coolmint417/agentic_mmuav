@@ -1,0 +1,39 @@
+<mujoco model="map7">
+  <!-- 三块吸附平面沿世界 +X（北）前后排列，面向同一接近方向 yaw=0。
+       沿用 map6：1.6x1.6m、厚0.16m；body原点是可吸附正面的中心。
+       旋转 R=Ry(-angle)，局部+Z为正面外法线。
+       每根直径0.2m的支撑柱伸入板背面，底部与世界Z=0的地面连接。 -->
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane" friction="1 1 1"/>
+
+    <!-- 近处：42度，蓝色瓷砖。 -->
+    <body name="map7_panel_front" pos="3 2 2"
+          quat="0.9335804264972017 0 -0.35836794954530027 0">
+      <geom name="map7_surface_front" type="box" pos="0 0 -0.08" size="0.8 0.8 0.08"
+            material="map_tiles_mat" friction="1 1 1"/>
+    </body>
+    <geom name="map7_support_front" type="cylinder" size="0.1"
+          fromto="3.080295673 2 0 3.080295673 2 1.910822621"
+          material="map_marble_mat" friction="1 1 1"/>
+
+    <!-- 中间：46度，木板。 -->
+    <body name="map7_panel_middle" pos="7 2 2"
+          quat="0.9205048534524404 0 -0.39073112848927377 0">
+      <geom name="map7_surface_middle" type="box" pos="0 0 -0.08" size="0.8 0.8 0.08"
+            material="map_planks_mat" friction="1 1 1"/>
+    </body>
+    <geom name="map7_support_middle" type="cylinder" size="0.1"
+          fromto="7.086320776 2 0 7.086320776 2 1.916640996"
+          material="map_marble_mat" friction="1 1 1"/>
+
+    <!-- 远处：49度，砖墙。 -->
+    <body name="map7_panel_back" pos="11 2 2"
+          quat="0.9099612708765432 0 -0.414693242656239 0">
+      <geom name="map7_surface_back" type="box" pos="0 0 -0.08" size="0.8 0.8 0.08"
+            material="obstacle_wall_brick1" friction="1 1 1"/>
+    </body>
+    <geom name="map7_support_back" type="cylinder" size="0.1"
+          fromto="11.090565150 2 0 11.090565150 2 1.921272917"
+          material="map_marble_mat" friction="1 1 1"/>
+  </worldbody>
+</mujoco>
