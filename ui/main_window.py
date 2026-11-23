@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from agent.runner import RunnerConfig
-from agent.backends import DeepSeekConfig, MiMoConfig
+from agent.backends import DeepSeekConfig, MiMoConfig, QwenConfig
 from env.scenes import SCENES, get_scene
 from .preview import CameraPreview
 
@@ -69,7 +69,7 @@ class AgentWindow(QMainWindow):
         self._timer.start(33)
         self._append_chat(
             "system",
-            "先加载本地模型或配置远程 API（DeepSeek / MiMo）。有手柄时将 Axis4 切为 1；启动时未检测到手柄则自动授权 Agent。模型观测始终使用第一视角。",
+            "先加载本地模型或配置远程 API（DeepSeek / MiMo / Qwen）。有手柄时将 Axis4 切为 1；启动时未检测到手柄则自动授权 Agent。模型观测始终使用第一视角。",
         )
 
     def _build(self):
@@ -80,6 +80,7 @@ class AgentWindow(QMainWindow):
         self.backend_selector.addItem("本地 Ministral", "ministral")
         self.backend_selector.addItem("DeepSeek API", "deepseek")
         self.backend_selector.addItem("MiMo API", "mimo")
+        self.backend_selector.addItem("Qwen API", "qwen")
         model_bar.addWidget(self.backend_selector)
         self.model_path = QLineEdit("mistralai/Ministral-3-3B-Instruct-2512")
         self.model_path.setPlaceholderText("Hugging Face 缓存 ID 或本地模型目录")
@@ -123,7 +124,7 @@ class AgentWindow(QMainWindow):
         )
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key.setPlaceholderText("留空读取 DEEPSEEK_API_KEY / MIMO_API_KEY；仅本次运行使用")
+        self.api_key.setPlaceholderText("留空读取 DEEPSEEK_API_KEY / MIMO_API_KEY / DASHSCOPE_API_KEY；仅本次运行使用")
         self.api_thinking = QCheckBox("启用思考模式")
         self.api_thinking.setChecked(True)
         self.api_effort = QComboBox()
@@ -405,7 +406,7 @@ class AgentWindow(QMainWindow):
 
     def _backend_changed(self):
         backend = self.backend_selector.currentData()
-        remote = backend in {"deepseek", "mimo"}
+        remote = backend in {"deepseek", "mimo", "qwen"}
         self.api_panel.setVisible(remote)
         self.browse_button.setVisible(not remote)
         self.load_button.setText("配置 API" if remote else "加载模型")
@@ -422,6 +423,15 @@ class AgentWindow(QMainWindow):
                 "MIMO_API_KEY",
                 "MiMo 模型名（需支持图像）",
             ),
+            "qwen": (
+                "qwen3-vl-plus",
+                os.environ.get(
+                    "QWEN_BASE_URL",
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                ),
+                "DASHSCOPE_API_KEY",
+                "Qwen 模型名（需支持图像）",
+            ),
         }
         if remote:
             model, url, env_name, placeholder = defaults[backend]
@@ -432,16 +442,24 @@ class AgentWindow(QMainWindow):
                 f"留空读取 {env_name}；仅本次运行使用"
             )
             self.api_effort.setEnabled(backend == "deepseek")
+            self.api_thinking.setChecked(backend != "qwen")
             if backend == "deepseek":
                 self.api_note.setText(
                     "DeepSeek 将接收任务、对话历史、无人机状态和第一视角图片；启用 JSON Output。"
                     "思考模式建议至少 4096 个生成 token，在 Agent 设置中修改。"
                 )
-            else:
+            elif backend == "mimo":
                 self.api_note.setText(
                     "MiMo 将接收任务、对话历史、无人机状态和第一视角图片；启用 JSON Output。"
                     "MiMo 使用 max_completion_tokens 且不发送 reasoning_effort；"
                     "思考强度选项对 MiMo 不生效。单次生成建议至少 4096 个 token。"
+                )
+            else:
+                self.api_note.setText(
+                    "Qwen 通过 DashScope OpenAI 兼容接口接收任务、对话历史、无人机状态和第一视角图片。"
+                    "JSON Output 与思考模式不能同时启用：默认关闭思考以保证 JSON 输出；"
+                    "勾选思考后不发送 response_format，模型仍按 JSON 协议回答。"
+                    "思考强度选项对 Qwen 不生效。单次生成建议至少 4096 个 token。"
                 )
         else:
             self.model_path.setText("mistralai/Ministral-3-3B-Instruct-2512")
@@ -477,6 +495,14 @@ class AgentWindow(QMainWindow):
                 )
             elif self.backend_selector.currentData() == "mimo":
                 spec = MiMoConfig(
+                    model=spec,
+                    base_url=self.api_url.text().strip(),
+                    api_key=self.api_key.text().strip(),
+                    thinking=self.api_thinking.isChecked(),
+                    timeout_seconds=self.api_timeout.value(),
+                )
+            elif self.backend_selector.currentData() == "qwen":
+                spec = QwenConfig(
                     model=spec,
                     base_url=self.api_url.text().strip(),
                     api_key=self.api_key.text().strip(),

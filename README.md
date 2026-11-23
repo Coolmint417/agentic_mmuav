@@ -9,7 +9,7 @@
 起终点速度和终点加速度为零，起始比推力与初始加速度联合优化。规划成功后释放四吸盘，稳定悬停后返回。
 
 基于现有 MuJoCo 无人机环境，逐步搭建本地 VLM 驱动的具身 agent。
-当前提供本地 Ministral 3B 和 DeepSeek / MiMo API 推理、起降与航点工具、agent 与无人机状态机。
+当前提供本地 Ministral 3B 和 DeepSeek / MiMo / Qwen API 推理、起降与航点工具、agent 与无人机状态机。
 已实现独立 Environment Runtime、模型 Agent Runner 和 PySide6 桌面界面。
 
 中文总体架构、两个状态机及模型通信格式见 [工程架构图](docs/architecture.md)。
@@ -72,6 +72,13 @@ MiMo API 同样可通过界面顶部后端选择启用，或 `python app.py --ba
 base URL `https://api.xiaomimimo.com/v1`；请求使用 `max_completion_tokens`，
 不发送 `reasoning_effort`，思考强度选项对该后端不生效。
 详细配置与测试范围见 [agent/MIMO.md](agent/MIMO.md)。
+
+Qwen（通义千问）也可通过顶部后端选择启用，或 `python app.py --backend qwen`。
+默认模型 `qwen3-vl-plus`，base URL `https://dashscope.aliyuncs.com/compatible-mode/v1`；
+在界面填写 API Key 或预先设置 `DASHSCOPE_API_KEY`。DashScope 的 JSON Output 与思考模式
+不能同时启用：默认关闭思考并使用 `response_format={"type":"json_object"}`；
+勾选思考模式后不发送该字段，模型按 system prompt 输出 JSON。思考强度选项对 Qwen 不生效。
+详细说明见 [agent/QWEN.md](agent/QWEN.md)。
 
 ## 手动与 agent 控制
 

@@ -8,7 +8,7 @@ import threading
 
 from runtime.events import EventBus, describe_error
 from .protocol import GenerationCancelled, SYSTEM_PROMPT, parse_decision
-from .backends import DeepSeekConfig, MiMoConfig, load_backend as _load_backend
+from .backends import DeepSeekConfig, MiMoConfig, QwenConfig, load_backend as _load_backend
 
 
 @dataclass(frozen=True)
@@ -412,12 +412,15 @@ class AgentRunner:
                         continue
                     if kind == "load":
                         self._model_state = "loading"
-                        remote = isinstance(value, (DeepSeekConfig, MiMoConfig))
-                        remote_label = (
-                            "MiMo API"
-                            if isinstance(value, MiMoConfig)
-                            else "DeepSeek API"
+                        remote = isinstance(
+                            value, (DeepSeekConfig, MiMoConfig, QwenConfig)
                         )
+                        if isinstance(value, MiMoConfig):
+                            remote_label = "MiMo API"
+                        elif isinstance(value, QwenConfig):
+                            remote_label = "Qwen API"
+                        else:
+                            remote_label = "DeepSeek API"
                         self._chat(
                             f"正在配置 {remote_label}……"
                             if remote

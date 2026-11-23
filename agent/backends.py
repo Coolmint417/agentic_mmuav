@@ -70,6 +70,25 @@ class MiMoConfig:
         _validate_timeout(self.timeout_seconds)
 
 
+@dataclass(frozen=True)
+class QwenConfig:
+    model: str = "qwen3-vl-plus"
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key: str = field(default="", repr=False)
+    thinking: bool = False
+    timeout_seconds: float = 180.0
+
+    def __post_init__(self):
+        if not isinstance(self.api_key, str):
+            raise ValueError("API Key 必须是字符串。")
+        if not isinstance(self.model, str) or not self.model.strip():
+            raise ValueError("Qwen 模型名不能为空。")
+        _validate_base_url(self.base_url)
+        if not isinstance(self.thinking, bool):
+            raise ValueError("无效的 Qwen 思考设置。")
+        _validate_timeout(self.timeout_seconds)
+
+
 def load_backend(spec):
     if isinstance(spec, DeepSeekConfig):
         from .deepseek import DeepSeekBackend
@@ -79,6 +98,10 @@ def load_backend(spec):
         from .mimo import MiMoBackend
 
         return MiMoBackend(spec)
+    if isinstance(spec, QwenConfig):
+        from .qwen import QwenBackend
+
+        return QwenBackend(spec)
     from .ministral import MinistralBackend
 
     return MinistralBackend(spec)

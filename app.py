@@ -18,14 +18,19 @@ def main():
     )
     parser.add_argument("--model-path", help="本地模型路径/缓存 ID，或 DeepSeek 模型名")
     parser.add_argument(
-        "--backend", choices=("ministral", "deepseek", "mimo"), default="ministral"
+        "--backend",
+        choices=("ministral", "deepseek", "mimo", "qwen"),
+        default="ministral",
     )
     parser.add_argument(
         "--api-base-url",
         default=None,
     )
     parser.add_argument(
-        "--thinking", action=argparse.BooleanOptionalAction, default=True
+        "--thinking",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="覆盖后端默认思考设置（Qwen 默认关闭）",
     )
     parser.add_argument(
         "--reasoning-effort", choices=("low", "high", "max"), default="low"
@@ -64,6 +69,13 @@ def main():
         "mimo": (
             "mimo-v2.6-pro",
             os.environ.get("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1"),
+        ),
+        "qwen": (
+            "qwen3-vl-plus",
+            os.environ.get(
+                "QWEN_BASE_URL",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
         ),
     }
     default_model, default_url = backend_defaults[args.backend]
@@ -121,12 +133,13 @@ def main():
         args.model_path
         or (
             default_model
-            if args.backend in {"deepseek", "mimo"}
+            if args.backend in {"deepseek", "mimo", "qwen"}
             else "mistralai/Ministral-3-3B-Instruct-2512"
         )
     )
     window.api_url.setText(args.api_base_url or default_url)
-    window.api_thinking.setChecked(args.thinking)
+    thinking = args.thinking if args.thinking is not None else args.backend != "qwen"
+    window.api_thinking.setChecked(thinking)
     window.api_effort.setCurrentText(args.reasoning_effort)
     window.api_timeout.setValue(args.api_timeout)
     # Backend selection may replace the local token default; explicit CLI wins.
