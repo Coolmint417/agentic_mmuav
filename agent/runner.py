@@ -8,7 +8,7 @@ import threading
 
 from runtime.events import EventBus, describe_error
 from .protocol import GenerationCancelled, SYSTEM_PROMPT, parse_decision
-from .backends import DeepSeekConfig, load_backend as _load_backend
+from .backends import DeepSeekConfig, MiMoConfig, load_backend as _load_backend
 
 
 @dataclass(frozen=True)
@@ -412,16 +412,21 @@ class AgentRunner:
                         continue
                     if kind == "load":
                         self._model_state = "loading"
-                        remote = isinstance(value, DeepSeekConfig)
+                        remote = isinstance(value, (DeepSeekConfig, MiMoConfig))
+                        remote_label = (
+                            "MiMo API"
+                            if isinstance(value, MiMoConfig)
+                            else "DeepSeek API"
+                        )
                         self._chat(
-                            "正在配置 DeepSeek API……"
+                            f"正在配置 {remote_label}……"
                             if remote
                             else "正在加载本地模型，首次请求可能需要编译推理算子……"
                         )
                         self._backend = self._factory(value)
                         self._model_state = "ready"
                         self._chat(
-                            "DeepSeek API 已配置；首次授权任务时验证网络和密钥。"
+                            f"{remote_label} 已配置；首次授权任务时验证网络和密钥。"
                             if remote
                             else "模型已加载，可以发送任务。"
                         )

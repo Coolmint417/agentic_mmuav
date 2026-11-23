@@ -9,7 +9,7 @@
 起终点速度和终点加速度为零，起始比推力与初始加速度联合优化。规划成功后释放四吸盘，稳定悬停后返回。
 
 基于现有 MuJoCo 无人机环境，逐步搭建本地 VLM 驱动的具身 agent。
-当前提供本地 Ministral 3B 和 DeepSeek API 推理、起降与航点工具、agent 与无人机状态机。
+当前提供本地 Ministral 3B 和 DeepSeek / MiMo API 推理、起降与航点工具、agent 与无人机状态机。
 已实现独立 Environment Runtime、模型 Agent Runner 和 PySide6 桌面界面。
 
 中文总体架构、两个状态机及模型通信格式见 [工程架构图](docs/architecture.md)。
@@ -66,6 +66,12 @@ python app.py --backend deepseek
 默认模型 `deepseek-flash`，支持第一视角图片、思考模式和 JSON Output；默认生成上限 4096 token。
 该后端会将任务、对话历史、状态和第一视角图片发送至所配置的 API。
 详细配置、取消行为及测试范围见 [agent/DEEPSEEK.md](agent/DEEPSEEK.md)。
+
+MiMo API 同样可通过界面顶部后端选择启用，或 `python app.py --backend mimo`。
+在界面填写 API Key 或预先设置 `MIMO_API_KEY`，默认模型 `mimo-v2.6-pro`，
+base URL `https://api.xiaomimimo.com/v1`；请求使用 `max_completion_tokens`，
+不发送 `reasoning_effort`，思考强度选项对该后端不生效。
+详细配置与测试范围见 [agent/MIMO.md](agent/MIMO.md)。
 
 ## 手动与 agent 控制
 
