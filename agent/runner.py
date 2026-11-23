@@ -354,10 +354,13 @@ class AgentRunner:
             try:
                 decision = parse_decision(raw)
             except (ValueError, TypeError) as exc:
-                self._log("parse_error", turn_id, {"error": str(exc)})
+                self._log("parse_error", turn_id, {"error": str(exc), "raw": raw[:2000]})
                 parse_failures += 1
                 if parse_failures > self.config.max_parse_retries:
-                    raise ValueError("模型多次未返回合法 JSON 指令：" + str(exc)) from exc
+                    raise ValueError(
+                        "模型多次未返回合法 JSON 指令：" + str(exc)
+                        + "；最近一次模型输出：" + " ".join(str(raw).split())[:240]
+                    ) from exc
                 self._chat("模型指令格式有误，正在请求修正。")
                 history.append(
                     {
@@ -367,6 +370,7 @@ class AgentRunner:
                         + "）："
                         + str(exc)
                         + "\n请修正上一条回复的 JSON 格式，保持原任务和判断不变。"
+                        + "\n只输出一个顶层 JSON 对象（以 { 开头、} 结尾）；不要 JSON 数组、Markdown 代码块或额外文字。"
                         + '\n只输出一个符合工具协议的 JSON 对象；若使用 final，其值必须是字符串，例如 {"final":"任务已完成。"}。',
                     }
                 )

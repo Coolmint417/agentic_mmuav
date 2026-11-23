@@ -11,10 +11,74 @@ class GenerationCancelled(RuntimeError):
     pass
 
 
+def _balanced_json(text):
+    start = None
+    for index, char in enumerate(text):
+        if char in "{[":
+            start = index
+            break
+    if start is None:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth -= 1
+            if depth == 0:
+                return text[start:index + 1]
+    return None
+
+
+def _json_candidates(payload):
+    yield payload
+    for block in re.findall(r"```(?:json)?\s*(.*?)```", payload, re.DOTALL):
+        block = block.strip()
+        if block:
+            yield block
+    balanced = _balanced_json(payload)
+    if balanced is not None:
+        yield balanced
+
+
+def _decode_decision(payload):
+    last_error = None
+    for candidate in _json_candidates(payload):
+        try:
+            decision = json.loads(candidate)
+        except (ValueError, TypeError) as exc:
+            last_error = exc
+            continue
+        if isinstance(decision, str):
+            try:
+                decision = json.loads(decision)
+            except (ValueError, TypeError) as exc:
+                last_error = exc
+                continue
+        if isinstance(decision, list) and len(decision) == 1 and isinstance(decision[0], dict):
+            decision = decision[0]
+        return decision
+    if last_error is not None:
+        raise last_error
+    raise ValueError("Decision must be one JSON object")
+
+
 def parse_decision(text):
-    payload = text.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", payload, re.DOTALL)
-    decision = json.loads(fenced.group(1) if fenced else payload)
+    payload = str(text).strip()
+    decision = _decode_decision(payload)
     json.dumps(decision, allow_nan=False)
     if not isinstance(decision, dict):
         raise ValueError("Decision must be one JSON object")
