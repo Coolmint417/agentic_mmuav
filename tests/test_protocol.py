@@ -19,6 +19,18 @@ class RobustParseTests(unittest.TestCase):
     def test_double_encoded_json_string(self):
         self.assertEqual(parse_decision(r'"{\"tool\":\"takeoff\"}"'), {"tool": "takeoff"})
 
+    def test_empty_arguments_field_ignored(self):
+        for tool in ("takeoff", "land", "aggressive_takeoff", "detect_planes"):
+            with self.subTest(tool=tool):
+                self.assertEqual(
+                    parse_decision('{"tool": "%s", "arguments": {}}' % tool),
+                    {"tool": tool},
+                )
+
+    def test_nonempty_arguments_field_still_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_decision('{"tool": "takeoff", "arguments": {"height": 1}}')
+
     def test_non_object_values_rejected(self):
         for value in ("[]", '[{"tool":"takeoff"},{"tool":"land"}]', "null", "42", '"takeoff"'):
             with self.subTest(value=value), self.assertRaises(ValueError):

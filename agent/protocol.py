@@ -82,6 +82,13 @@ def parse_decision(text):
     json.dumps(decision, allow_nan=False)
     if not isinstance(decision, dict):
         raise ValueError("Decision must be one JSON object")
+    # Some OpenAI-compatible models wrap no-argument tools as
+    # {"tool": "takeoff", "arguments": {}}; empty arguments carry no meaning.
+    decision = {
+        key: value
+        for key, value in decision.items()
+        if not (key in {"arguments", "args", "parameters", "input"} and not value)
+    }
     if set(decision) == {"final"}:
         if not isinstance(decision["final"], str) or not decision["final"].strip():
             raise ValueError("final must be a nonempty string")
