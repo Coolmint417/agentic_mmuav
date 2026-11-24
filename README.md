@@ -1,5 +1,15 @@
 # Agentic MMUAV
 
+## 新增：可接入第三方 API 后端
+
+在原有 DeepSeek 之外，新增 **MiMo API** 与 **Qwen（通义千问）API** 两个可选后端：
+
+- 切换：界面顶部后端下拉框，或命令行 `--backend mimo` / `--backend qwen`
+- Key：`MIMO_API_KEY` / `DASHSCOPE_API_KEY`（也可在界面填写，仅本次运行使用）
+- 协议适配：MiMo 使用 `max_completion_tokens`；Qwen 使用 `enable_thinking`，JSON 模式与思考互斥
+- 文档：[agent/MIMO.md](agent/MIMO.md)、[agent/QWEN.md](agent/QWEN.md)
+- 同时修复思考类模型返回 JSON 数组/代码块/空 arguments 时的解析兼容问题
+
 起降工具已实现：模型可调用 `{"tool": "takeoff"}` 或 `{"tool": "land"}`，无需参数。
 工具复用环境自动起降逻辑，并在完成后同步 agent 与无人机状态机。
 调用方法及完成判据见 [tools/README.md](tools/README.md)。
