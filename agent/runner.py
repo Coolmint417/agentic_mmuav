@@ -8,7 +8,7 @@ import threading
 
 from runtime.events import EventBus, describe_error
 from .protocol import GenerationCancelled, SYSTEM_PROMPT, parse_decision
-from .backends import DeepSeekConfig, load_backend as _load_backend
+from .backends import DeepSeekConfig, MiMoConfig, QwenConfig, load_backend as _load_backend
 
 
 @dataclass(frozen=True)
@@ -354,10 +354,13 @@ class AgentRunner:
             try:
                 decision = parse_decision(raw)
             except (ValueError, TypeError) as exc:
-                self._log("parse_error", turn_id, {"error": str(exc)})
+                self._log("parse_error", turn_id, {"error": str(exc), "raw": raw[:2000]})
                 parse_failures += 1
                 if parse_failures > self.config.max_parse_retries:
-                    raise ValueError("模型多次未返回合法 JSON 指令：" + str(exc)) from exc
+                    raise ValueError(
+                        "模型多次未返回合法 JSON 指令：" + str(exc)
+                        + "；最近一次模型输出：" + " ".join(str(raw).split())[:240]
+                    ) from exc
                 self._chat("模型指令格式有误，正在请求修正。")
                 history.append(
                     {
@@ -367,6 +370,7 @@ class AgentRunner:
                         + "）："
                         + str(exc)
                         + "\n请修正上一条回复的 JSON 格式，保持原任务和判断不变。"
+                        + "\n只输出一个顶层 JSON 对象（以 { 开头、} 结尾）；不要 JSON 数组、Markdown 代码块或额外文字。"
                         + '\n只输出一个符合工具协议的 JSON 对象；若使用 final，其值必须是字符串，例如 {"final":"任务已完成。"}。',
                     }
                 )
@@ -412,16 +416,24 @@ class AgentRunner:
                         continue
                     if kind == "load":
                         self._model_state = "loading"
-                        remote = isinstance(value, DeepSeekConfig)
+                        remote = isinstance(
+                            value, (DeepSeekConfig, MiMoConfig, QwenConfig)
+                        )
+                        if isinstance(value, MiMoConfig):
+                            remote_label = "MiMo API"
+                        elif isinstance(value, QwenConfig):
+                            remote_label = "Qwen API"
+                        else:
+                            remote_label = "DeepSeek API"
                         self._chat(
-                            "正在配置 DeepSeek API……"
+                            f"正在配置 {remote_label}……"
                             if remote
                             else "正在加载本地模型，首次请求可能需要编译推理算子……"
                         )
                         self._backend = self._factory(value)
                         self._model_state = "ready"
                         self._chat(
-                            "DeepSeek API 已配置；首次授权任务时验证网络和密钥。"
+                            f"{remote_label} 已配置；首次授权任务时验证网络和密钥。"
                             if remote
                             else "模型已加载，可以发送任务。"
                         )

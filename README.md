@@ -1,5 +1,15 @@
 # Agentic MMUAV
 
+## 新增：可接入第三方 API 后端
+
+在原有 DeepSeek 之外，新增 **MiMo API** 与 **Qwen（通义千问）API** 两个可选后端：
+
+- 切换：界面顶部后端下拉框，或命令行 `--backend mimo` / `--backend qwen`
+- Key：`MIMO_API_KEY` / `DASHSCOPE_API_KEY`（也可在界面填写，仅本次运行使用）
+- 协议适配：MiMo 使用 `max_completion_tokens`；Qwen 使用 `enable_thinking`，JSON 模式与思考互斥
+- 文档：[agent/MIMO.md](agent/MIMO.md)、[agent/QWEN.md](agent/QWEN.md)
+- 同时修复思考类模型返回 JSON 数组/代码块/空 arguments 时的解析兼容问题
+
 起降工具已实现：模型可调用 `{"tool": "takeoff"}` 或 `{"tool": "land"}`，无需参数。
 工具复用环境自动起降逻辑，并在完成后同步 agent 与无人机状态机。
 调用方法及完成判据见 [tools/README.md](tools/README.md)。
@@ -9,7 +19,7 @@
 起终点速度和终点加速度为零，起始比推力与初始加速度联合优化。规划成功后释放四吸盘，稳定悬停后返回。
 
 基于现有 MuJoCo 无人机环境，逐步搭建本地 VLM 驱动的具身 agent。
-当前提供本地 Ministral 3B 和 DeepSeek API 推理、起降与航点工具、agent 与无人机状态机。
+当前提供本地 Ministral 3B 和 DeepSeek / MiMo / Qwen API 推理、起降与航点工具、agent 与无人机状态机。
 已实现独立 Environment Runtime、模型 Agent Runner 和 PySide6 桌面界面。
 
 中文总体架构、两个状态机及模型通信格式见 [工程架构图](docs/architecture.md)。
@@ -66,6 +76,19 @@ python app.py --backend deepseek
 默认模型 `deepseek-flash`，支持第一视角图片、思考模式和 JSON Output；默认生成上限 4096 token。
 该后端会将任务、对话历史、状态和第一视角图片发送至所配置的 API。
 详细配置、取消行为及测试范围见 [agent/DEEPSEEK.md](agent/DEEPSEEK.md)。
+
+MiMo API 同样可通过界面顶部后端选择启用，或 `python app.py --backend mimo`。
+在界面填写 API Key 或预先设置 `MIMO_API_KEY`，默认模型 `mimo-v2.6-pro`，
+base URL `https://api.xiaomimimo.com/v1`；请求使用 `max_completion_tokens`，
+不发送 `reasoning_effort`，思考强度选项对该后端不生效。
+详细配置与测试范围见 [agent/MIMO.md](agent/MIMO.md)。
+
+Qwen（通义千问）也可通过顶部后端选择启用，或 `python app.py --backend qwen`。
+默认模型 `qwen3-vl-plus`，base URL `https://dashscope.aliyuncs.com/compatible-mode/v1`；
+在界面填写 API Key 或预先设置 `DASHSCOPE_API_KEY`。DashScope 的 JSON Output 与思考模式
+不能同时启用：默认关闭思考并使用 `response_format={"type":"json_object"}`；
+勾选思考模式后不发送该字段，模型按 system prompt 输出 JSON。思考强度选项对 Qwen 不生效。
+详细说明见 [agent/QWEN.md](agent/QWEN.md)。
 
 ## 手动与 agent 控制
 

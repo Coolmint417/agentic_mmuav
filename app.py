@@ -18,14 +18,19 @@ def main():
     )
     parser.add_argument("--model-path", help="本地模型路径/缓存 ID，或 DeepSeek 模型名")
     parser.add_argument(
-        "--backend", choices=("ministral", "deepseek"), default="ministral"
+        "--backend",
+        choices=("ministral", "deepseek", "mimo", "qwen"),
+        default="ministral",
     )
     parser.add_argument(
         "--api-base-url",
-        default=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        default=None,
     )
     parser.add_argument(
-        "--thinking", action=argparse.BooleanOptionalAction, default=True
+        "--thinking",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="覆盖后端默认思考设置（Qwen 默认关闭）",
     )
     parser.add_argument(
         "--reasoning-effort", choices=("low", "high", "max"), default="low"
@@ -55,6 +60,25 @@ def main():
         "--preview-fps", type=float, default=30, help="界面预览目标帧率，范围 (0, 60]"
     )
     args = parser.parse_args()
+    backend_defaults = {
+        "ministral": ("mistralai/Ministral-3-3B-Instruct-2512", ""),
+        "deepseek": (
+            "deepseek-flash",
+            os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        ),
+        "mimo": (
+            "mimo-v2.6-pro",
+            os.environ.get("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1"),
+        ),
+        "qwen": (
+            "qwen3-vl-plus",
+            os.environ.get(
+                "QWEN_BASE_URL",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
+        ),
+    }
+    default_model, default_url = backend_defaults[args.backend]
     if not 8 <= args.depth_size <= 1024:
         parser.error("depth-size must be in [8, 1024]")
     if args.max_new_tokens < 1 or args.observation_size < 1 or args.api_timeout < 1:
@@ -102,17 +126,20 @@ def main():
         ),
     )
     window = AgentWindow(runtime, runner, events)
-    window.backend_selector.setCurrentIndex(1 if args.backend == "deepseek" else 0)
+    window.backend_selector.setCurrentIndex(
+        window.backend_selector.findData(args.backend)
+    )
     window.model_path.setText(
         args.model_path
         or (
-            "deepseek-flash"
-            if args.backend == "deepseek"
+            default_model
+            if args.backend in {"deepseek", "mimo", "qwen"}
             else "mistralai/Ministral-3-3B-Instruct-2512"
         )
     )
-    window.api_url.setText(args.api_base_url)
-    window.api_thinking.setChecked(args.thinking)
+    window.api_url.setText(args.api_base_url or default_url)
+    thinking = args.thinking if args.thinking is not None else args.backend != "qwen"
+    window.api_thinking.setChecked(thinking)
     window.api_effort.setCurrentText(args.reasoning_effort)
     window.api_timeout.setValue(args.api_timeout)
     # Backend selection may replace the local token default; explicit CLI wins.
